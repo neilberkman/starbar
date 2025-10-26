@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Xcode
+*.xcuserstate
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Swift
+.build/
+/Packages
+*.swp
+*~.nib
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Config (contains token)
+config.json
+
+# Built app bundles
+*.app
+
+# Test files
+test_*.swift
+
+# Misc
+.netrc

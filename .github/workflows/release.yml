@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build -c release --arch arm64 --arch x86_64
+
+      - name: Create .app bundle
+        run: |
+          mkdir -p StarBar.app/Contents/MacOS
+          mkdir -p StarBar.app/Contents/Resources
+
+          # Copy binary
+          cp .build/apple/Products/Release/StarBar StarBar.app/Contents/MacOS/
+
+          # Create Info.plist
+          cat > StarBar.app/Contents/Info.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>StarBar</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.xuku.starbar</string>
+              <key>CFBundleName</key>
+              <string>StarBar</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${GITHUB_REF_NAME#v}</string>
+              <key>CFBundleVersion</key>
+              <string>${GITHUB_REF_NAME#v}</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>13.0</string>
+              <key>LSUIElement</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Create zip
+        run: |
+          zip -r StarBar.app.zip StarBar.app
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: StarBar.app.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
