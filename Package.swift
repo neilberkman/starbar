@@ -8,9 +8,20 @@ let package = Package(
     platforms: [
         .macOS(.v13)
     ],
+    products: [
+        .executable(name: "StarBar", targets: ["StarBarApp"])
+    ],
     targets: [
-        .executableTarget(
+        .target(
             name: "StarBar"
+        ),
+        .executableTarget(
+            name: "StarBarApp",
+            dependencies: ["StarBar"]
+        ),
+        .testTarget(
+            name: "StarBarTests",
+            dependencies: ["StarBar"]
         ),
     ]
 )
