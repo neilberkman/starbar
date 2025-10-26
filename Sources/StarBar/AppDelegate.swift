@@ -40,9 +40,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     let totalStars = config?.state.repos.values.reduce(0) { $0 + $1.starCount } ?? 0
     menu.addItem(NSMenuItem(title: "Total Stars: \(totalStars)", action: nil, keyEquivalent: ""))
     menu.addItem(NSMenuItem.separator())
-    menu.addItem(
-      NSMenuItem(title: "Rescan Repos Now", action: #selector(rescanRepos), keyEquivalent: "r"))
-    menu.addItem(NSMenuItem(title: "Clear Badge", action: #selector(clearBadge), keyEquivalent: ""))
+
+    let rescanItem = NSMenuItem(title: "Rescan Repos Now", action: #selector(rescanRepos), keyEquivalent: "r")
+    rescanItem.target = self
+    menu.addItem(rescanItem)
+
+    let clearItem = NSMenuItem(title: "Clear Badge", action: #selector(clearBadge), keyEquivalent: "")
+    clearItem.target = self
+    menu.addItem(clearItem)
+
     menu.addItem(NSMenuItem.separator())
     menu.addItem(
       NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
