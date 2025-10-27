@@ -3,10 +3,16 @@ import Foundation
 struct GitHubRepo: Codable {
   let fullName: String
   let stargazersCount: Int
+  let owner: RepoOwner
+
+  struct RepoOwner: Codable {
+    let login: String
+  }
 
   enum CodingKeys: String, CodingKey {
     case fullName = "full_name"
     case stargazersCount = "stargazers_count"
+    case owner
   }
 }
 

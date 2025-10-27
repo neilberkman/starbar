@@ -1,7 +1,7 @@
 import Cocoa
 import StarBar
 
-let app = NSApplication.shared
+let app = StarBarApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()

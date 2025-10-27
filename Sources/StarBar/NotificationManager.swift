@@ -2,38 +2,42 @@ import Cocoa
 import UserNotifications
 
 class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
-  private var badgeCount = 0
+  private(set) var badgeCount = 0
   weak var statusItem: NSStatusItem?
 
   override init() {
     super.init()
-    UNUserNotificationCenter.current().delegate = self
-    requestPermission()
+    // Skip UNUserNotificationCenter setup for debug builds - using osascript instead
+    // UNUserNotificationCenter.current().delegate = self
+    // requestPermission()
   }
 
   func requestPermission() {
-    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
-      granted, error in
-      if let error = error {
-        print("Notification permission error: \(error)")
-      }
-    }
+    // Not needed for osascript notifications
+    // UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
+    //   granted, error in
+    //   if let error = error {
+    //     print("Notification permission error: \(error)")
+    //   }
+    // }
   }
 
   func showStarNotification(repo: String, user: String) {
-    let content = UNMutableNotificationContent()
-    content.title = "⭐ New Star"
-    content.body = "\(repo) from @\(user)"
-    content.sound = .default
-    content.userInfo = ["repo": repo]
+    // Use osascript for debug builds since UserNotifications requires proper app bundle
+    let script = """
+      display notification "\(repo) from @\(user)" with title "⭐ New Star" sound name "default"
+      """
 
-    let request = UNNotificationRequest(
-      identifier: UUID().uuidString,
-      content: content,
-      trigger: nil
-    )
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    task.arguments = ["-e", script]
 
-    UNUserNotificationCenter.current().add(request)
+    do {
+      try task.run()
+      NSLog("✓ Notification sent via osascript")
+    } catch {
+      NSLog("❌ Failed to show notification: \(error)")
+    }
 
     incrementBadge()
   }
@@ -41,6 +45,13 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   func incrementBadge() {
     badgeCount += 1
     updateBadge()
+  }
+
+  func decrementBadge() {
+    if badgeCount > 0 {
+      badgeCount -= 1
+      updateBadge()
+    }
   }
 
   func clearBadge() {
@@ -60,7 +71,7 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
   }
 
-  private func createBadgedIcon(count: Int) -> NSImage {
+  func createBadgedIcon(count: Int) -> NSImage {
     let baseImage = NSImage(systemSymbolName: "star.fill", accessibilityDescription: "StarBar")!
     let size = NSSize(width: 22, height: 22)
 
@@ -72,22 +83,28 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     // Draw badge
     if count > 0 {
-      let badgeSize: CGFloat = 12
-      let badge = NSRect(x: size.width - badgeSize, y: 0, width: badgeSize, height: badgeSize)
+      let badgeSize: CGFloat = 14
+      let badgeOffset: CGFloat = 1
+      let badge = NSRect(
+        x: size.width - badgeSize + badgeOffset,
+        y: size.height - badgeSize + badgeOffset,
+        width: badgeSize,
+        height: badgeSize
+      )
 
-      NSColor.red.setFill()
+      NSColor.systemRed.setFill()
       let path = NSBezierPath(ovalIn: badge)
       path.fill()
 
       let text = count > 99 ? "99+" : "\(count)"
       let attrs: [NSAttributedString.Key: Any] = [
-        .font: NSFont.systemFont(ofSize: 8),
+        .font: NSFont.boldSystemFont(ofSize: 9),
         .foregroundColor: NSColor.white,
       ]
       let textSize = text.size(withAttributes: attrs)
       let textRect = NSRect(
         x: badge.midX - textSize.width / 2,
-        y: badge.midY - textSize.height / 2,
+        y: badge.midY - textSize.height / 2 + 0.5,
         width: textSize.width,
         height: textSize.height
       )

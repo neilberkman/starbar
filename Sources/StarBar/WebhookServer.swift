@@ -5,7 +5,7 @@ class WebhookServer {
   private var listener: NWListener?
   var onStarReceived: ((WebhookPayload) -> Void)?
 
-  func start(port: UInt16 = 3000) throws {
+  func start(port: UInt16 = 58472) throws {
     let params = NWParameters.tcp
     listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
 
@@ -64,13 +64,35 @@ class WebhookServer {
   }
 
   private func handleWebhook(body: String) {
-    guard let data = body.data(using: .utf8) else { return }
+    NSLog("🔌 handleWebhook called, body length: \(body.count)")
+
+    // GitHub sends webhooks as application/x-www-form-urlencoded with payload= parameter
+    var jsonString = body
+
+    if body.hasPrefix("payload=") {
+      // Extract and URL-decode the payload parameter
+      let payloadValue = String(body.dropFirst("payload=".count))
+      if let decoded = payloadValue.removingPercentEncoding {
+        jsonString = decoded
+        NSLog("🔌 Decoded URL-encoded payload")
+      }
+    }
+
+    guard let data = jsonString.data(using: .utf8) else {
+      NSLog("❌ Failed to convert body to data")
+      return
+    }
 
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
 
-    if let payload = try? decoder.decode(WebhookPayload.self, from: data) {
+    do {
+      let payload = try decoder.decode(WebhookPayload.self, from: data)
+      NSLog("✓ Decoded webhook payload successfully")
       onStarReceived?(payload)
+    } catch {
+      NSLog("❌ Failed to decode webhook payload: \(error)")
+      NSLog("❌ JSON was: \(String(jsonString.prefix(500)))")
     }
   }
 }
