@@ -531,6 +531,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self.setScanning(true)
     }
 
+    // Clear existing stars to avoid duplicates on rescan
+    recentStars.removeAll()
+
     do {
       // Fetch repos
       NSLog("🔍 performInitialScan: Fetching repos from GitHub API...")
