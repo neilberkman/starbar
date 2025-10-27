@@ -39,7 +39,7 @@ public class StarBarApplication: NSApplication {
   }
 }
 
-public class AppDelegate: NSObject, NSApplicationDelegate {
+public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   var statusItem: NSStatusItem?
   var config: Config?
   var tunnelManager: TunnelManager?
@@ -145,9 +145,28 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     button.alphaValue = 1.0
   }
 
+  public func menuNeedsUpdate(_ menu: NSMenu) {
+    NSLog("🔍 menuNeedsUpdate called - updating timestamps")
+    // Find the "Recent Stars" submenu and update timestamps
+    for item in menu.items {
+      if item.title == "Recent Stars", let submenu = item.submenu {
+        let last10 = Array(recentStars.prefix(10))
+        for (index, event) in last10.enumerated() where index < submenu.items.count {
+          let timeAgo = timeAgoString(from: event.timestamp)
+          let prefix = event.isRead ? "" : "• "
+          let starNum = event.starNumber.map { " - Star #\($0)" } ?? ""
+          let title = "\(prefix)⭐ \(event.repo) from @\(event.user)\(starNum) (\(timeAgo))"
+          submenu.items[index].title = title
+        }
+        break
+      }
+    }
+  }
+
   func updateMenu() {
     NSLog("🔍 updateMenu called, recentStars.count = \(recentStars.count)")
     let menu = NSMenu()
+    menu.delegate = self
 
     let totalStars = config?.state.repos.values.reduce(0) { $0 + $1.starCount } ?? 0
     menu.addItem(NSMenuItem(title: "Total Stars: \(totalStars)", action: nil, keyEquivalent: ""))
@@ -636,28 +655,42 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
 
     if payload.action == "started" {
       // New star (GitHub uses "started" for star events)
-      let event = StarEvent(
-        repo: repo,
-        user: payload.sender.login,
-        timestamp: payload.starredAt ?? Date(),
-        isRead: false,
-        starNumber: payload.repository.stargazersCount  // Current total is their star number
-      )
-      recentStars.insert(event, at: 0)
+      // Fetch the actual star time from the API since webhooks don't include it
+      Task {
+        do {
+          guard let api = self.gitHubAPI else {
+            NSLog("❌ API not available")
+            return
+          }
+          let stargazers = try await api.fetchStargazers(repo: repo, since: Date.distantPast, totalStars: payload.repository.stargazersCount)
+          // Find this user's star
+          if let userStar = stargazers.first(where: { $0.user.login == payload.sender.login }) {
+            let event = StarEvent(
+              repo: repo,
+              user: payload.sender.login,
+              timestamp: userStar.starredAt,
+              isRead: false,
+              starNumber: payload.repository.stargazersCount
+            )
+            await MainActor.run {
+              recentStars.insert(event, at: 0)
 
-      // Keep only last 50
-      if recentStars.count > 50 {
-        recentStars = Array(recentStars.prefix(50))
+              // Keep only last 50
+              if recentStars.count > 50 {
+                recentStars.removeLast()
+              }
+
+              self.notificationManager?.showStarNotification(repo: repo, user: payload.sender.login)
+              self.notificationManager?.incrementBadge()
+              self.updateMenu()
+              self.saveConfig()
+            }
+          }
+        } catch {
+          NSLog("❌ Failed to fetch star time: \(error)")
+        }
       }
-
-      NSLog("⭐ New star: \(repo) by @\(payload.sender.login) (#\(payload.repository.stargazersCount))")
-
-      // Show notification
-      if let nm = notificationManager {
-        nm.showStarNotification(repo: repo, user: payload.sender.login)
-      } else {
-        NSLog("❌ NotificationManager is nil, cannot show notification!")
-      }
+      return
     } else if payload.action == "deleted" {
       // Unstar - just update the count, don't show notification
       NSLog("⭐ Unstar: \(repo) by @\(payload.sender.login)")
