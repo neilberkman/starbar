@@ -31,9 +31,9 @@ struct GitHubUser: Codable {
 }
 
 struct WebhookPayload: Codable {
-  let action: String
+  let action: String?  // Optional: ping events don't have this
   let repository: Repository
-  let sender: GitHubUser
+  let sender: GitHubUser?  // Optional: ping events don't have this
   let starredAt: Date?
 
   struct Repository: Codable {
@@ -51,6 +51,8 @@ struct WebhookPayload: Codable {
     case repository
     case sender
     case starredAt = "starred_at"
+    case zen  // GitHub ping events include this
+    case hookId = "hook_id"  // GitHub ping events include this
   }
 }
 
@@ -76,4 +78,9 @@ struct WebhookCreateRequest: Codable {
 struct WebhookResponse: Codable {
   let id: Int
   let url: String
+  let config: WebhookConfig
+
+  struct WebhookConfig: Codable {
+    let url: String
+  }
 }

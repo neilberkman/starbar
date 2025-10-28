@@ -508,6 +508,22 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var successCount = 0
     for repoName in activeRepos {
       do {
+        // First, delete ONLY our old cloudflare webhooks to avoid conflicts
+        let existingHooks = try await api.listRepoWebhooks(repo: repoName)
+        let ourOldHooks = existingHooks.filter { $0.config.url.contains("trycloudflare.com") }
+        if !ourOldHooks.isEmpty {
+          NSLog("Found \(ourOldHooks.count) old StarBar webhooks for \(repoName), deleting...")
+          for hook in ourOldHooks {
+            do {
+              try await api.deleteRepoWebhook(repo: repoName, webhookId: hook.id)
+              NSLog("✓ Deleted old StarBar webhook \(hook.id) (\(hook.config.url))")
+            } catch {
+              NSLog("⚠️ Failed to delete webhook \(hook.id): \(error)")
+            }
+          }
+        }
+
+        // Now create the new webhook
         let webhookId = try await api.createRepoWebhook(repo: repoName, webhookURL: url)
         successCount += 1
         NSLog("✓ Created webhook for \(repoName): \(webhookId)")
@@ -640,6 +656,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func handleStarEvent(payload: WebhookPayload) {
+    // Ignore ping/test webhooks (no action field)
+    guard let action = payload.action, let sender = payload.sender else {
+      NSLog("✓ Webhook ping received, ignoring")
+      return
+    }
+
     let repo = payload.repository.fullName
 
     // Add to tracked repos if new
@@ -654,20 +676,24 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     config?.state.repos[repo]?.lastStarAt = payload.starredAt ?? Date()
     config?.state.repos[repo]?.starCount = payload.repository.stargazersCount
 
-    NSLog("📬 Webhook received: action=\(payload.action), repo=\(repo), user=@\(payload.sender.login)")
+    NSLog("📬 Webhook received: action=\(action), repo=\(repo), user=@\(sender.login)")
 
-    if payload.action == "started" {
+    if action == "started" {
       // New star (GitHub uses "started" for star events)
       // Fetch the actual star time from the API since webhooks don't include it
+      NSLog("⭐ New star webhook - fetching actual timestamp from API...")
       Task {
         do {
           guard let api = self.gitHubAPI else {
             NSLog("❌ API not available")
             return
           }
+          NSLog("⭐ Fetching stargazers for \(repo)...")
           let stargazers = try await api.fetchStargazers(repo: repo, since: Date.distantPast, totalStars: payload.repository.stargazersCount)
+          NSLog("⭐ Got \(stargazers.count) stargazers, looking for \(payload.sender.login)...")
           // Find this user's star
           if let userStar = stargazers.first(where: { $0.user.login == payload.sender.login }) {
+            NSLog("⭐ Found user star at \(userStar.starredAt)")
             let event = StarEvent(
               repo: repo,
               user: payload.sender.login,
@@ -676,6 +702,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               starNumber: payload.repository.stargazersCount
             )
             await MainActor.run {
+              NSLog("⭐ Adding star to recentStars and showing notification...")
               recentStars.insert(event, at: 0)
 
               // Keep only last 50
@@ -683,11 +710,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 recentStars.removeLast()
               }
 
+              NSLog("⭐ Showing notification for \(repo) from @\(payload.sender.login)")
               self.notificationManager?.showStarNotification(repo: repo, user: payload.sender.login)
               self.notificationManager?.incrementBadge()
               self.updateMenu()
               self.saveConfig()
+              NSLog("⭐ Star added successfully!")
             }
+          } else {
+            NSLog("❌ Could not find star from \(payload.sender.login) in stargazers list!")
           }
         } catch {
           NSLog("❌ Failed to fetch star time: \(error)")

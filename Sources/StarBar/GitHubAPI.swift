@@ -27,9 +27,15 @@ class GitHubAPI {
 
     let (data, response) = try await URLSession.shared.data(for: request)
 
-    guard let httpResponse = response as? HTTPURLResponse,
-      (200...299).contains(httpResponse.statusCode)
-    else {
+    guard let httpResponse = response as? HTTPURLResponse else {
+      NSLog("❌ createRepoWebhook: Not an HTTP response")
+      throw APIError.requestFailed
+    }
+
+    if !(200...299).contains(httpResponse.statusCode) {
+      let errorBody = String(data: data, encoding: .utf8) ?? "Unable to decode error"
+      NSLog("❌ createRepoWebhook failed for \(repo): HTTP \(httpResponse.statusCode)")
+      NSLog("❌ Response body: \(errorBody)")
       throw APIError.requestFailed
     }
 

@@ -24,43 +24,83 @@ class WebhookServer {
   private func handleConnection(_ connection: NWConnection) {
     connection.start(queue: .main)
 
-    connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
-      [weak self] data, _, isComplete, error in
-      guard let data = data, !data.isEmpty else { return }
+    var receivedData = Data()
 
-      // Parse HTTP request
-      let request = String(data: data, encoding: .utf8) ?? ""
+    func receiveMore() {
+      connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
+        [weak self] data, _, isComplete, error in
 
-      if request.contains("POST /webhook") {
-        // Extract body from HTTP request
-        if let bodyStart = request.range(of: "\r\n\r\n")?.upperBound {
-          let body = String(request[bodyStart...])
-          self?.handleWebhook(body: body)
+        if let error = error {
+          NSLog("❌ Connection error: \(error)")
+          connection.cancel()
+          return
         }
 
-        // Send 200 OK
-        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
-        connection.send(
-          content: response.data(using: .utf8),
-          completion: .contentProcessed({ _ in
-            connection.cancel()
-          }))
-      } else if request.contains("GET /health") {
-        let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
-        connection.send(
-          content: response.data(using: .utf8),
-          completion: .contentProcessed({ _ in
-            connection.cancel()
-          }))
-      } else {
-        let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
-        connection.send(
-          content: response.data(using: .utf8),
-          completion: .contentProcessed({ _ in
-            connection.cancel()
-          }))
+        if let data = data {
+          receivedData.append(data)
+        }
+
+        // Parse HTTP request
+        guard let request = String(data: receivedData, encoding: .utf8) else {
+          if !isComplete {
+            receiveMore()
+          }
+          return
+        }
+
+        // Check if we have complete HTTP request (headers + body)
+        if let headerEnd = request.range(of: "\r\n\r\n") {
+          // Extract Content-Length to know how much body to expect
+          var expectedBodyLength = 0
+          if let contentLengthRange = request.range(of: "Content-Length: "),
+             let lineEnd = request[contentLengthRange.upperBound...].range(of: "\r\n") {
+            let lengthString = request[contentLengthRange.upperBound..<lineEnd.lowerBound]
+            expectedBodyLength = Int(lengthString) ?? 0
+          }
+
+          let headerEndIndex = request.distance(from: request.startIndex, to: headerEnd.upperBound)
+          let bodyLength = receivedData.count - headerEndIndex
+
+          // If we don't have the complete body yet, keep receiving
+          if bodyLength < expectedBodyLength && !isComplete {
+            receiveMore()
+            return
+          }
+
+          // We have complete request, handle it
+          if request.contains("POST /webhook") {
+            let body = String(request[headerEnd.upperBound...])
+            self?.handleWebhook(body: body)
+
+            let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+            connection.send(
+              content: response.data(using: .utf8),
+              completion: .contentProcessed({ _ in
+                connection.cancel()
+              }))
+          } else if request.contains("GET /health") {
+            let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+            connection.send(
+              content: response.data(using: .utf8),
+              completion: .contentProcessed({ _ in
+                connection.cancel()
+              }))
+          } else {
+            let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+            connection.send(
+              content: response.data(using: .utf8),
+              completion: .contentProcessed({ _ in
+                connection.cancel()
+              }))
+          }
+        } else if !isComplete {
+          // Don't have complete headers yet, keep receiving
+          receiveMore()
+        }
       }
     }
+
+    receiveMore()
   }
 
   private func handleWebhook(body: String) {
