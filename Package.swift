@@ -21,7 +21,10 @@ let package = Package(
         ),
         .testTarget(
             name: "StarBarTests",
-            dependencies: ["StarBar"]
+            dependencies: ["StarBar"],
+            resources: [
+                .copy("Fixtures")
+            ]
         ),
     ]
 )

@@ -123,6 +123,12 @@ class WebhookServer {
       return
     }
 
+    // Save raw payload to file for test fixtures
+    let timestamp = Date().timeIntervalSince1970
+    let filename = "/tmp/webhook_\(timestamp).json"
+    try? jsonString.write(toFile: filename, atomically: true, encoding: .utf8)
+    NSLog("💾 Saved raw webhook to: \(filename)")
+
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
 

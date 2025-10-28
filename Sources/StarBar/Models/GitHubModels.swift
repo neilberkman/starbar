@@ -51,8 +51,24 @@ struct WebhookPayload: Codable {
     case repository
     case sender
     case starredAt = "starred_at"
-    case zen  // GitHub ping events include this
-    case hookId = "hook_id"  // GitHub ping events include this
+  }
+
+  // Custom decoding to handle missing keys (ping events)
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    action = try container.decodeIfPresent(String.self, forKey: .action)
+    repository = try container.decode(Repository.self, forKey: .repository)
+    sender = try container.decodeIfPresent(GitHubUser.self, forKey: .sender)
+    starredAt = try container.decodeIfPresent(Date.self, forKey: .starredAt)
+  }
+
+  // Custom encoding
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encodeIfPresent(action, forKey: .action)
+    try container.encode(repository, forKey: .repository)
+    try container.encodeIfPresent(sender, forKey: .sender)
+    try container.encodeIfPresent(starredAt, forKey: .starredAt)
   }
 }
 
