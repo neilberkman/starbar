@@ -8,7 +8,7 @@ class GitHubAPI {
     self.token = token
   }
 
-  func createRepoWebhook(repo: String, webhookURL: String) async throws -> Int {
+  func createRepoWebhook(repo: String, webhookURL: String) async throws -> (id: Int, secret: String) {
     let url = URL(string: "\(baseURL)/repos/\(repo)/hooks")!
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
@@ -40,7 +40,7 @@ class GitHubAPI {
     }
 
     let webhookResponse = try JSONDecoder().decode(WebhookResponse.self, from: data)
-    return webhookResponse.id
+    return (id: webhookResponse.id, secret: secret)
   }
 
   func deleteRepoWebhook(repo: String, webhookId: Int) async throws {

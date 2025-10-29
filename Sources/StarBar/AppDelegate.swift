@@ -429,6 +429,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
       self?.handleStarEvent(payload: payload)
     }
 
+    // Setup webhook secret lookup for signature validation
+    webhookServer?.getWebhookSecret = { [weak self] repoName in
+      return self?.config?.state.repos[repoName]?.webhookSecret
+    }
+
     // Start webhook server
     try? webhookServer?.start()
 
@@ -524,7 +529,16 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // Now create the new webhook
-        let webhookId = try await api.createRepoWebhook(repo: repoName, webhookURL: url)
+        let (webhookId, secret) = try await api.createRepoWebhook(repo: repoName, webhookURL: url)
+
+        // Store the webhook secret for validation
+        if config?.state.repos[repoName] == nil {
+          config?.state.repos[repoName] = RepoState(lastStarAt: nil, starCount: 0, webhookSecret: secret)
+        } else {
+          config?.state.repos[repoName]?.webhookSecret = secret
+        }
+        saveConfig()
+
         successCount += 1
         NSLog("✓ Created webhook for \(repoName): \(webhookId)")
       } catch {
@@ -680,54 +694,30 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     if action == "started" {
       // New star (GitHub uses "started" for star events)
-      // Fetch the actual star time from the API since webhooks don't include it
-      NSLog("⭐ New star webhook - fetching actual timestamp from API...")
-      Task {
-        do {
-          guard let api = self.gitHubAPI else {
-            NSLog("❌ API not available")
-            return
-          }
-          NSLog("⭐ Fetching stargazers for \(repo)...")
-          let stargazers = try await api.fetchStargazers(repo: repo, since: Date.distantPast, totalStars: payload.repository.stargazersCount)
-          NSLog("⭐ Got \(stargazers.count) stargazers, looking for \(payload.sender.login)...")
-          // Find this user's star
-          if let userStar = stargazers.first(where: { $0.user.login == payload.sender.login }) {
-            NSLog("⭐ Found user star at \(userStar.starredAt)")
-            let event = StarEvent(
-              repo: repo,
-              user: payload.sender.login,
-              timestamp: userStar.starredAt,
-              isRead: false,
-              starNumber: payload.repository.stargazersCount
-            )
-            await MainActor.run {
-              NSLog("⭐ Adding star to recentStars and showing notification...")
-              recentStars.insert(event, at: 0)
+      NSLog("⭐ New star webhook received")
+      let event = StarEvent(
+        repo: repo,
+        user: sender.login,
+        timestamp: payload.starredAt ?? Date(),
+        isRead: false,
+        starNumber: payload.repository.stargazersCount
+      )
+      recentStars.insert(event, at: 0)
 
-              // Keep only last 50
-              if recentStars.count > 50 {
-                recentStars.removeLast()
-              }
-
-              NSLog("⭐ Showing notification for \(repo) from @\(payload.sender.login)")
-              self.notificationManager?.showStarNotification(repo: repo, user: payload.sender.login)
-              self.notificationManager?.incrementBadge()
-              self.updateMenu()
-              self.saveConfig()
-              NSLog("⭐ Star added successfully!")
-            }
-          } else {
-            NSLog("❌ Could not find star from \(payload.sender.login) in stargazers list!")
-          }
-        } catch {
-          NSLog("❌ Failed to fetch star time: \(error)")
-        }
+      // Keep only last 50
+      if recentStars.count > 50 {
+        recentStars = Array(recentStars.prefix(50))
       }
-      return
-    } else if payload.action == "deleted" {
+
+      NSLog("⭐ Showing notification for \(repo) from @\(sender.login)")
+      notificationManager?.showStarNotification(repo: repo, user: sender.login)
+      notificationManager?.incrementBadge()
+      updateMenu()
+      saveConfig()
+      NSLog("⭐ Star notification sent!")
+    } else if action == "deleted" {
       // Unstar - just update the count, don't show notification
-      NSLog("⭐ Unstar: \(repo) by @\(payload.sender.login)")
+      NSLog("⭐ Unstar: \(repo) by @\(sender.login)")
     }
 
     saveConfig()

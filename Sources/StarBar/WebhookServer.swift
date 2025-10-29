@@ -1,9 +1,11 @@
 import Foundation
 import Network
+import CryptoKit
 
 class WebhookServer {
   private var listener: NWListener?
   var onStarReceived: ((WebhookPayload) -> Void)?
+  var getWebhookSecret: ((String) -> String?)?  // Callback to get secret for repo
 
   func start(port: UInt16 = 58472) throws {
     let params = NWParameters.tcp
@@ -69,8 +71,9 @@ class WebhookServer {
 
           // We have complete request, handle it
           if request.contains("POST /webhook") {
+            let headers = String(request[..<headerEnd.lowerBound])
             let body = String(request[headerEnd.upperBound...])
-            self?.handleWebhook(body: body)
+            self?.handleWebhook(headers: headers, body: body)
 
             let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
             connection.send(
@@ -103,7 +106,7 @@ class WebhookServer {
     receiveMore()
   }
 
-  private func handleWebhook(body: String) {
+  private func handleWebhook(headers: String, body: String) {
     NSLog("🔌 handleWebhook called, body length: \(body.count)")
 
     // GitHub sends webhooks as application/x-www-form-urlencoded with payload= parameter
@@ -135,10 +138,58 @@ class WebhookServer {
     do {
       let payload = try decoder.decode(WebhookPayload.self, from: data)
       NSLog("✓ Decoded webhook payload successfully")
+
+      // Validate signature if we have a secret for this repo
+      if let secret = getWebhookSecret?(payload.repository.fullName) {
+        guard validateSignature(headers: headers, body: body, secret: secret) else {
+          NSLog("❌ Invalid webhook signature for \(payload.repository.fullName) - rejecting webhook")
+          return
+        }
+        NSLog("✓ Webhook signature validated for \(payload.repository.fullName)")
+      } else {
+        NSLog("⚠️ No webhook secret found for \(payload.repository.fullName) - skipping validation")
+      }
+
       onStarReceived?(payload)
     } catch {
       NSLog("❌ Failed to decode webhook payload: \(error)")
       NSLog("❌ JSON was: \(String(jsonString.prefix(500)))")
     }
+  }
+
+  private func validateSignature(headers: String, body: String, secret: String) -> Bool {
+    // Extract X-Hub-Signature-256 header
+    guard let signatureRange = headers.range(of: "X-Hub-Signature-256: ", options: .caseInsensitive),
+          let lineEnd = headers[signatureRange.upperBound...].range(of: "\r\n") else {
+      NSLog("❌ Missing X-Hub-Signature-256 header")
+      return false
+    }
+
+    let receivedSignature = String(headers[signatureRange.upperBound..<lineEnd.lowerBound])
+    NSLog("🔐 Received signature: \(receivedSignature)")
+
+    // GitHub sends the signature as "sha256=<hex>"
+    guard receivedSignature.hasPrefix("sha256=") else {
+      NSLog("❌ Invalid signature format")
+      return false
+    }
+
+    let receivedHex = String(receivedSignature.dropFirst("sha256=".count))
+
+    // Compute HMAC-SHA256 of the raw body
+    guard let bodyData = body.data(using: .utf8),
+          let secretData = secret.data(using: .utf8) else {
+      NSLog("❌ Failed to convert body or secret to data")
+      return false
+    }
+
+    let key = SymmetricKey(data: secretData)
+    let signature = HMAC<SHA256>.authenticationCode(for: bodyData, using: key)
+    let computedHex = signature.map { String(format: "%02x", $0) }.joined()
+
+    NSLog("🔐 Computed signature: sha256=\(computedHex)")
+
+    // Constant-time comparison
+    return receivedHex.lowercased() == computedHex.lowercased()
   }
 }

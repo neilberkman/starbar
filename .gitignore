@@ -20,5 +20,11 @@ DerivedData/
 # Config (contains token)
 config.json
 
+# Built app bundles
+*.app
+
+# Test files
+test_*.swift
+
 # Misc
 .netrc
