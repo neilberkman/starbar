@@ -689,6 +689,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   func handleNetworkChange() async {
     NSLog("Network changed, restarting tunnel...")
     tunnelManager?.stop()
+    webhookServer?.stop()
     await startTunnel()
   }
 
