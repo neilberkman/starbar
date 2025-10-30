@@ -10,7 +10,8 @@ class TunnelManager {
   var onTunnelDied: (() -> Void)?
 
   static func parseURL(from output: String) -> String? {
-    let pattern = "https://[a-zA-Z0-9-]+\\.trycloudflare\\.com"
+    // ngrok outputs: url=https://xxxx.ngrok-free.app
+    let pattern = "https://[a-zA-Z0-9-]+\\.ngrok-free\\.app"
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
 
     let range = NSRange(output.startIndex..., in: output)
@@ -47,22 +48,22 @@ class TunnelManager {
   }
 
   private func attemptStart(port: Int, timeout: TimeInterval) async throws -> String {
-    // Check if cloudflared is installed
+    // Check if ngrok is installed
     let checkProcess = Process()
     checkProcess.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-    checkProcess.arguments = ["cloudflared"]
+    checkProcess.arguments = ["ngrok"]
 
     try checkProcess.run()
     checkProcess.waitUntilExit()
 
     guard checkProcess.terminationStatus == 0 else {
-      throw TunnelError.cloudflaredNotInstalled
+      throw TunnelError.ngrokNotInstalled
     }
 
-    // Clean up any orphaned cloudflared tunnels from previous runs on this port
+    // Clean up any orphaned ngrok tunnels from previous runs on this port
     let cleanupProcess = Process()
     cleanupProcess.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-    cleanupProcess.arguments = ["-f", "cloudflared tunnel --url http://localhost:\(port)"]
+    cleanupProcess.arguments = ["-f", "ngrok http \(port)"]
     try? cleanupProcess.run()
     cleanupProcess.waitUntilExit()
 
@@ -75,8 +76,8 @@ class TunnelManager {
 
     // Start tunnel
     process = Process()
-    process?.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/cloudflared")
-    process?.arguments = ["tunnel", "--url", "http://localhost:\(port)"]
+    process?.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/ngrok")
+    process?.arguments = ["http", "\(port)"]
 
     process?.standardOutput = outputPipe
     process?.standardError = errorPipe
@@ -85,7 +86,7 @@ class TunnelManager {
     process?.terminationHandler = { [weak self] proc in
       let reason = proc.terminationReason
       let status = proc.terminationStatus
-      NSLog("💀 Cloudflared terminated: reason=\(reason.rawValue) status=\(status)")
+      NSLog("💀 Ngrok terminated: reason=\(reason.rawValue) status=\(status)")
 
       // Restart on ANY termination - we always want the tunnel running
       self?.onTunnelDied?()
@@ -93,75 +94,44 @@ class TunnelManager {
 
     try process?.run()
 
-    // Parse URL from output with timeout
-    // cloudflared writes to stderr, not stdout
+    // Wait for ngrok to start and query its API
+    try await Task.sleep(nanoseconds: 2_000_000_000)  // 2s for ngrok to start
+
+    // Query ngrok API for tunnel URL
+    guard let apiURL = URL(string: "http://localhost:4040/api/tunnels") else {
+      throw TunnelError.urlParseTimeout
+    }
+
     let startTime = Date()
-    var output = ""
-
     while Date().timeIntervalSince(startTime) < timeout {
-      // Read from errorPipe since cloudflared writes to stderr
-      if let data = try? errorPipe.fileHandleForReading.availableData,
-        !data.isEmpty
-      {
-        output += String(data: data, encoding: .utf8) ?? ""
-
-        if let url = Self.parseURL(from: output) {
-          tunnelURL = url
-          NSLog("✓ Tunnel URL extracted: \(url)")
-
-          // Start continuous monitoring for URL changes
-          Task {
-            await monitorTunnelURLChanges()
-          }
+      do {
+        let (data, _) = try await URLSession.shared.data(from: apiURL)
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let tunnels = json["tunnels"] as? [[String: Any]],
+           let firstTunnel = tunnels.first,
+           let publicURL = firstTunnel["public_url"] as? String,
+           publicURL.hasPrefix("https://")
+        {
+          tunnelURL = publicURL
+          NSLog("✓ Tunnel URL extracted from API: \(publicURL)")
 
           // Start health monitoring
           startHealthMonitoring()
 
-          return url
+          return publicURL
         }
+      } catch {
+        // API not ready yet, keep trying
       }
 
-      try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+      try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
     }
 
-    NSLog("❌ Tunnel URL parse timeout after \(timeout)s")
+    NSLog("❌ Tunnel URL fetch timeout after \(timeout)s")
     throw TunnelError.urlParseTimeout
   }
 
-  private func monitorTunnelURLChanges() async {
-    NSLog("→ Started monitoring cloudflared for tunnel URL changes")
-    var buffer = ""
-
-    while process?.isRunning == true {
-      // Read any new output from cloudflared
-      if let data = try? errorPipe.fileHandleForReading.availableData,
-         !data.isEmpty
-      {
-        if let newOutput = String(data: data, encoding: .utf8) {
-          buffer += newOutput
-
-          // Look for new tunnel URL in the output
-          if let newURL = Self.parseURL(from: buffer) {
-            if newURL != tunnelURL {
-              NSLog("🔄 Detected tunnel URL change: \(tunnelURL ?? "nil") -> \(newURL)")
-              tunnelURL = newURL
-              onTunnelURLChanged?(newURL)
-              buffer = ""  // Clear buffer after finding URL
-            }
-          }
-
-          // Keep buffer from growing too large
-          if buffer.count > 10000 {
-            buffer = String(buffer.suffix(5000))
-          }
-        }
-      }
-
-      try? await Task.sleep(nanoseconds: 500_000_000)  // Check every 500ms
-    }
-
-    NSLog("→ Stopped monitoring cloudflared (process ended)")
-  }
+  // Ngrok URLs don't change once started, so no need to monitor for changes
 
   private func startHealthMonitoring() {
     healthCheckTask?.cancel()
@@ -173,7 +143,7 @@ class TunnelManager {
 
         guard let proc = process, !proc.isRunning else {
           if process != nil {
-            NSLog("💀 Cloudflared process died")
+            NSLog("💀 Ngrok process died")
             onTunnelDied?()
           }
           break
@@ -192,7 +162,7 @@ class TunnelManager {
   }
 
   enum TunnelError: Error {
-    case cloudflaredNotInstalled
+    case ngrokNotInstalled
     case urlParseTimeout
   }
 }
