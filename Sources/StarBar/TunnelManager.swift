@@ -5,6 +5,8 @@ class TunnelManager {
   private(set) var tunnelURL: String?
   private var outputPipe = Pipe()
   private var errorPipe = Pipe()
+  var onTunnelURLChanged: ((String) -> Void)?
+  var onTunnelDied: (() -> Void)?
 
   static func parseURL(from output: String) -> String? {
     let pattern = "https://[a-zA-Z0-9-]+\\.trycloudflare\\.com"
@@ -78,6 +80,14 @@ class TunnelManager {
     process?.standardOutput = outputPipe
     process?.standardError = errorPipe
 
+    // Setup termination handler - called automatically when process exits
+    process?.terminationHandler = { [weak self] proc in
+      if proc.terminationStatus != 0 {
+        NSLog("❌ Cloudflared crashed (exit code: \(proc.terminationStatus))")
+        self?.onTunnelDied?()
+      }
+    }
+
     try process?.run()
 
     // Parse URL from output with timeout
@@ -95,6 +105,12 @@ class TunnelManager {
         if let url = Self.parseURL(from: output) {
           tunnelURL = url
           NSLog("✓ Tunnel URL extracted: \(url)")
+
+          // Start continuous monitoring for URL changes
+          Task {
+            await monitorTunnelURLChanges()
+          }
+
           return url
         }
       }
@@ -106,7 +122,43 @@ class TunnelManager {
     throw TunnelError.urlParseTimeout
   }
 
+  private func monitorTunnelURLChanges() async {
+    NSLog("→ Started monitoring cloudflared for tunnel URL changes")
+    var buffer = ""
+
+    while process?.isRunning == true {
+      // Read any new output from cloudflared
+      if let data = try? errorPipe.fileHandleForReading.availableData,
+         !data.isEmpty
+      {
+        if let newOutput = String(data: data, encoding: .utf8) {
+          buffer += newOutput
+
+          // Look for new tunnel URL in the output
+          if let newURL = Self.parseURL(from: buffer) {
+            if newURL != tunnelURL {
+              NSLog("🔄 Detected tunnel URL change: \(tunnelURL ?? "nil") -> \(newURL)")
+              tunnelURL = newURL
+              onTunnelURLChanged?(newURL)
+              buffer = ""  // Clear buffer after finding URL
+            }
+          }
+
+          // Keep buffer from growing too large
+          if buffer.count > 10000 {
+            buffer = String(buffer.suffix(5000))
+          }
+        }
+      }
+
+      try? await Task.sleep(nanoseconds: 500_000_000)  // Check every 500ms
+    }
+
+    NSLog("→ Stopped monitoring cloudflared (process ended)")
+  }
+
   func stop() {
+    process?.terminationHandler = nil
     process?.terminate()
     process = nil
     tunnelURL = nil

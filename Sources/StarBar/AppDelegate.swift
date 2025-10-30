@@ -420,8 +420,25 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func startTunnel() async {
+    print("→ startTunnel: Creating tunnel manager")
     tunnelManager = TunnelManager()
     webhookServer = WebhookServer()
+
+    // Setup tunnel URL change handler
+    tunnelManager?.onTunnelURLChanged = { [weak self] newURL in
+      NSLog("🔄 Tunnel URL changed to: \(newURL)")
+      Task {
+        await self?.setupWebhooks()
+      }
+    }
+
+    // Setup tunnel death handler
+    tunnelManager?.onTunnelDied = { [weak self] in
+      NSLog("💀 Tunnel died, restarting...")
+      Task {
+        await self?.handleNetworkChange()
+      }
+    }
 
     // Setup webhook handler BEFORE starting server
     // This way it works even if tunnel fails
@@ -435,22 +452,29 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // Start webhook server
+    print("→ startTunnel: Starting webhook server")
     try? webhookServer?.start()
 
     // Start tunnel
+    print("→ startTunnel: Starting cloudflared tunnel")
     do {
       let tunnelURL = try await tunnelManager?.start() ?? ""
-      NSLog("Tunnel started: \(tunnelURL)")
+      print("✓ Tunnel started: \(tunnelURL)")
+      print("✓ tunnelManager.tunnelURL = \(tunnelManager?.tunnelURL ?? "nil")")
     } catch {
-      NSLog("Tunnel error: \(error)")
+      print("❌ Tunnel error: \(error)")
     }
   }
 
   func setupWebhooks() async {
     guard let tunnelURL = tunnelManager?.tunnelURL else {
-      NSLog("No tunnel URL available for webhook setup")
+      print("❌ setupWebhooks: No tunnel URL available!")
+      print("❌ tunnelManager exists: \(tunnelManager != nil)")
+      print("❌ tunnelManager.tunnelURL: \(tunnelManager?.tunnelURL ?? "nil")")
       return
     }
+
+    print("✓ setupWebhooks: Using tunnel URL: \(tunnelURL)")
 
     // Clean old webhooks
     await cleanOldWebhooks()
@@ -652,15 +676,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func setupNetworkMonitoring() {
-    // DISABLED: Network monitoring causes too many tunnel restarts
-    // The tunnel should stay running unless it actually dies
-    // networkMonitor = NetworkMonitor()
-    // networkMonitor?.onNetworkChange = { [weak self] in
-    //   Task {
-    //     await self?.handleNetworkChange()
-    //   }
-    // }
-    // networkMonitor?.start()
+    networkMonitor = NetworkMonitor()
+    networkMonitor?.onNetworkChange = { [weak self] in
+      Task {
+        await self?.handleNetworkChange()
+      }
+    }
+    networkMonitor?.start()
+    NSLog("✓ Network monitoring enabled")
   }
 
   func handleNetworkChange() async {
