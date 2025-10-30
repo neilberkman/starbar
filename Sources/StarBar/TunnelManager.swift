@@ -5,6 +5,7 @@ class TunnelManager {
   private(set) var tunnelURL: String?
   private var outputPipe = Pipe()
   private var errorPipe = Pipe()
+  private var healthCheckTask: Task<Void, Never>?
   var onTunnelURLChanged: ((String) -> Void)?
   var onTunnelDied: (() -> Void)?
 
@@ -82,10 +83,12 @@ class TunnelManager {
 
     // Setup termination handler - called automatically when process exits
     process?.terminationHandler = { [weak self] proc in
-      if proc.terminationStatus != 0 {
-        NSLog("❌ Cloudflared crashed (exit code: \(proc.terminationStatus))")
-        self?.onTunnelDied?()
-      }
+      let reason = proc.terminationReason
+      let status = proc.terminationStatus
+      NSLog("💀 Cloudflared terminated: reason=\(reason.rawValue) status=\(status)")
+
+      // Restart on ANY termination - we always want the tunnel running
+      self?.onTunnelDied?()
     }
 
     try process?.run()
@@ -110,6 +113,9 @@ class TunnelManager {
           Task {
             await monitorTunnelURLChanges()
           }
+
+          // Start health monitoring
+          startHealthMonitoring()
 
           return url
         }
@@ -157,8 +163,29 @@ class TunnelManager {
     NSLog("→ Stopped monitoring cloudflared (process ended)")
   }
 
+  private func startHealthMonitoring() {
+    healthCheckTask?.cancel()
+
+    healthCheckTask = Task {
+      // Check every 60s if process is still alive
+      while !Task.isCancelled {
+        try? await Task.sleep(nanoseconds: 60_000_000_000)  // 60s
+
+        guard let proc = process, !proc.isRunning else {
+          if process != nil {
+            NSLog("💀 Cloudflared process died")
+            onTunnelDied?()
+          }
+          break
+        }
+      }
+    }
+  }
+
   func stop() {
     process?.terminationHandler = nil
+    healthCheckTask?.cancel()
+    healthCheckTask = nil
     process?.terminate()
     process = nil
     tunnelURL = nil
