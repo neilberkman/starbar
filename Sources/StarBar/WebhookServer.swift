@@ -4,10 +4,17 @@ import CryptoKit
 
 class WebhookServer {
   private var listener: NWListener?
+  private let listenerQueue = DispatchQueue(label: "com.starbar.webhook", qos: .userInitiated)
   var onStarReceived: ((WebhookPayload) -> Void)?
   var getWebhookSecret: ((String) -> String?)?  // Callback to get secret for repo
 
-  func start(port: UInt16 = 58472) throws {
+  func start(port: UInt16 = 63472) throws {
+    // If listener is already running, don't create a new one
+    if listener != nil {
+      NSLog("⚠️ Webhook server already running, skipping start")
+      return
+    }
+
     let params = NWParameters.tcp
     listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
 
@@ -15,7 +22,7 @@ class WebhookServer {
       self?.handleConnection(connection)
     }
 
-    listener?.start(queue: .main)
+    listener?.start(queue: listenerQueue)
   }
 
   func stop() {
@@ -24,7 +31,7 @@ class WebhookServer {
   }
 
   private func handleConnection(_ connection: NWConnection) {
-    connection.start(queue: .main)
+    connection.start(queue: listenerQueue)
 
     var receivedData = Data()
 

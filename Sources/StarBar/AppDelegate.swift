@@ -386,11 +386,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     gitHubAPI = GitHubAPI(token: token)
 
     // Create NotificationManager FIRST so it's ready for webhooks
-    DispatchQueue.main.async {
-      self.notificationManager = NotificationManager()
-      self.notificationManager?.statusItem = self.statusItem
-      NSLog("✓ NotificationManager created")
-    }
+    // TEMP DISABLED: Works in app bundle but crashes when run directly
+    // TODO: Run via proper app bundle to enable notifications
+    NSLog("⚠️ NotificationManager disabled (run via app bundle to enable)")
+    // DispatchQueue.main.async {
+    //   self.notificationManager = NotificationManager()
+    //   self.notificationManager?.statusItem = self.statusItem
+    //   NSLog("✓ NotificationManager created")
+    // }
 
     // Start tunnel in background - don't block scan
     Task {
@@ -453,7 +456,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Start webhook server
     print("→ startTunnel: Starting webhook server")
-    try? webhookServer?.start()
+    do {
+      try webhookServer?.start()
+      NSLog("✓ Webhook server started successfully")
+    } catch {
+      NSLog("❌ Webhook server failed to start: \(error)")
+    }
 
     // Start tunnel
     print("→ startTunnel: Starting cloudflared tunnel")
@@ -537,9 +545,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var successCount = 0
     for repoName in activeRepos {
       do {
-        // First, delete ONLY our old cloudflare webhooks to avoid conflicts
+        // First, delete ONLY our old tunnel webhooks (cloudflare + ngrok) to avoid conflicts
         let existingHooks = try await api.listRepoWebhooks(repo: repoName)
-        let ourOldHooks = existingHooks.filter { $0.config.url.contains("trycloudflare.com") }
+        let ourOldHooks = existingHooks.filter {
+          $0.config.url.contains("trycloudflare.com") || $0.config.url.contains("ngrok.app")
+        }
         if !ourOldHooks.isEmpty {
           NSLog("Found \(ourOldHooks.count) old StarBar webhooks for \(repoName), deleting...")
           for hook in ourOldHooks {

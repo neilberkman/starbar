@@ -6,6 +6,7 @@ class TunnelManager {
   private var outputPipe = Pipe()
   private var errorPipe = Pipe()
   private var healthCheckTask: Task<Void, Never>?
+  private var isStarting = false
   var onTunnelURLChanged: ((String) -> Void)?
   var onTunnelDied: (() -> Void)?
 
@@ -20,7 +21,15 @@ class TunnelManager {
     return String(output[Range(match.range, in: output)!])
   }
 
-  func start(port: Int = 58472, timeout: TimeInterval = 10, maxRetries: Int = 3) async throws -> String {
+  func start(port: Int = 63472, timeout: TimeInterval = 10, maxRetries: Int = 3) async throws -> String {
+    // Prevent concurrent starts
+    guard !isStarting else {
+      NSLog("⚠️ Tunnel already starting, skipping duplicate start request")
+      throw TunnelError.alreadyStarting
+    }
+    isStarting = true
+    defer { isStarting = false }
+
     // Try with exponential backoff
     var lastError: Error?
 
@@ -97,31 +106,37 @@ class TunnelManager {
     // Wait for ngrok to start and query its API
     try await Task.sleep(nanoseconds: 2_000_000_000)  // 2s for ngrok to start
 
-    // Query ngrok API for tunnel URL
-    guard let apiURL = URL(string: "http://localhost:4040/api/tunnels") else {
-      throw TunnelError.urlParseTimeout
-    }
+    // Try both common ngrok API ports (4040 is default, but it may use 4041 if 4040 is busy)
+    let apiPorts = [4040, 4041]
 
     let startTime = Date()
     while Date().timeIntervalSince(startTime) < timeout {
-      do {
-        let (data, _) = try await URLSession.shared.data(from: apiURL)
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let tunnels = json["tunnels"] as? [[String: Any]],
-           let firstTunnel = tunnels.first,
-           let publicURL = firstTunnel["public_url"] as? String,
-           publicURL.hasPrefix("https://")
-        {
-          tunnelURL = publicURL
-          NSLog("✓ Tunnel URL extracted from API: \(publicURL)")
+      for port in apiPorts {
+        guard let apiURL = URL(string: "http://localhost:\(port)/api/tunnels") else { continue }
 
-          // Start health monitoring
-          startHealthMonitoring()
+        do {
+          let (data, _) = try await URLSession.shared.data(from: apiURL)
+          if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+             let tunnels = json["tunnels"] as? [[String: Any]],
+             let firstTunnel = tunnels.first,
+             let publicURL = firstTunnel["public_url"] as? String,
+             publicURL.hasPrefix("https://")
+          {
+            tunnelURL = publicURL
+            NSLog("✓ Tunnel URL extracted from API (port \(port)): \(publicURL)")
 
-          return publicURL
+            // Start health monitoring
+            startHealthMonitoring()
+
+            // Notify callback that URL is ready
+            onTunnelURLChanged?(publicURL)
+
+            return publicURL
+          }
+        } catch {
+          // API not ready on this port, try next
+          continue
         }
-      } catch {
-        // API not ready yet, keep trying
       }
 
       try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
@@ -164,5 +179,6 @@ class TunnelManager {
   enum TunnelError: Error {
     case ngrokNotInstalled
     case urlParseTimeout
+    case alreadyStarting
   }
 }
