@@ -26,6 +26,21 @@ struct StarEvent {
   let starNumber: Int?  // Which # star this was (e.g., star #157)
 }
 
+// Actor for thread-safe webhook coordination
+actor WebhookCoordinator {
+  private var isSettingUp = false
+
+  func trySetup() -> Bool {
+    guard !isSettingUp else { return false }
+    isSettingUp = true
+    return true
+  }
+
+  func finish() {
+    isSettingUp = false
+  }
+}
+
 // Custom NSApplication to handle paste in menu bar apps
 public class StarBarApplication: NSApplication {
   override public func sendAction(_ action: Selector, to target: Any?, from sender: Any?) -> Bool {
@@ -51,6 +66,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   var setupTokenInput: NSTextField?
   var setupWindow: NSWindow?
   private var isScanning = false
+  private var isRestartingTunnel = false
+  private let webhookCoordinator = WebhookCoordinator()
 
   public override init() {
     super.init()
@@ -386,14 +403,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     gitHubAPI = GitHubAPI(token: token)
 
     // Create NotificationManager FIRST so it's ready for webhooks
-    // TEMP DISABLED: Works in app bundle but crashes when run directly
-    // TODO: Run via proper app bundle to enable notifications
-    NSLog("⚠️ NotificationManager disabled (run via app bundle to enable)")
-    // DispatchQueue.main.async {
-    //   self.notificationManager = NotificationManager()
-    //   self.notificationManager?.statusItem = self.statusItem
-    //   NSLog("✓ NotificationManager created")
-    // }
+    DispatchQueue.main.async {
+      self.notificationManager = NotificationManager()
+      self.notificationManager?.statusItem = self.statusItem
+      NSLog("✓ NotificationManager created")
+    }
 
     // Start tunnel in background - don't block scan
     Task {
@@ -475,6 +489,18 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func setupWebhooks() async {
+    // Prevent concurrent webhook setup using actor
+    guard await webhookCoordinator.trySetup() else {
+      NSLog("⚠️ Already setting up webhooks, skipping duplicate call")
+      return
+    }
+
+    defer {
+      Task {
+        await webhookCoordinator.finish()
+      }
+    }
+
     guard let tunnelURL = tunnelManager?.tunnelURL else {
       print("❌ setupWebhooks: No tunnel URL available!")
       print("❌ tunnelManager exists: \(tunnelManager != nil)")
@@ -697,6 +723,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func handleNetworkChange() async {
+    // Prevent concurrent network change handling
+    guard !isRestartingTunnel else {
+      NSLog("⚠️ Already restarting tunnel, skipping duplicate network change event")
+      return
+    }
+
+    isRestartingTunnel = true
+    defer { isRestartingTunnel = false }
+
     NSLog("Network changed, restarting tunnel...")
     tunnelManager?.stop()
     webhookServer?.stop()

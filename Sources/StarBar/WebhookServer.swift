@@ -9,20 +9,24 @@ class WebhookServer {
   var getWebhookSecret: ((String) -> String?)?  // Callback to get secret for repo
 
   func start(port: UInt16 = 63472) throws {
-    // If listener is already running, don't create a new one
+    // Stop existing listener if any
     if listener != nil {
-      NSLog("⚠️ Webhook server already running, skipping start")
-      return
+      NSLog("⚠️ Webhook server already exists, stopping old one first")
+      stop()
     }
 
+    NSLog("→ Creating NWListener on port \(port)")
     let params = NWParameters.tcp
     listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
 
     listener?.newConnectionHandler = { [weak self] connection in
+      NSLog("→ New connection received")
       self?.handleConnection(connection)
     }
 
+    NSLog("→ Starting listener on queue")
     listener?.start(queue: listenerQueue)
+    NSLog("→ Listener.start() called")
   }
 
   func stop() {

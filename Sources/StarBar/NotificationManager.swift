@@ -7,41 +7,39 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
   override init() {
     super.init()
-    UNUserNotificationCenter.current().delegate = self
-    requestPermission()
+    // Use osascript for notifications since UNUserNotificationCenter requires proper app bundle
+    // UNUserNotificationCenter.current().delegate = self
+    // requestPermission()
   }
 
   func requestPermission() {
-    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-      if let error = error {
-        NSLog("❌ Notification permission error: \(error)")
-      } else if granted {
-        NSLog("✓ Notification permissions granted")
-      } else {
-        NSLog("⚠️ Notification permissions denied")
-      }
-    }
+    // Not needed for osascript notifications
+    // UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+    //   if let error = error {
+    //     NSLog("❌ Notification permission error: \(error)")
+    //   } else if granted {
+    //     NSLog("✓ Notification permissions granted")
+    //   } else {
+    //     NSLog("⚠️ Notification permissions denied")
+    //   }
+    // }
   }
 
   func showStarNotification(repo: String, user: String) {
-    let content = UNMutableNotificationContent()
-    content.title = "⭐ New Star"
-    content.body = "\(repo) from @\(user)"
-    content.sound = .default
-    content.userInfo = ["repo": repo]
+    // Use osascript for notifications since UserNotifications requires proper app bundle
+    let script = """
+      display notification "\(repo) from @\(user)" with title "⭐ New Star" sound name "default"
+      """
 
-    let request = UNNotificationRequest(
-      identifier: UUID().uuidString,
-      content: content,
-      trigger: nil
-    )
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    task.arguments = ["-e", script]
 
-    UNUserNotificationCenter.current().add(request) { error in
-      if let error = error {
-        NSLog("❌ Failed to show notification: \(error)")
-      } else {
-        NSLog("✓ Notification delivered successfully")
-      }
+    do {
+      try task.run()
+      NSLog("✓ Notification sent via osascript")
+    } catch {
+      NSLog("❌ Failed to show notification: \(error)")
     }
 
     incrementBadge()
