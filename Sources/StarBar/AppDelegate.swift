@@ -180,6 +180,17 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
   }
 
+  public func menuWillOpen(_ menu: NSMenu) {
+    // Clear badge when Recent Stars submenu opens
+    if menu.title == "" {  // Submenus don't have titles by default
+      // Check if this is the Recent Stars submenu by checking parent
+      if let _ = menu.items.first(where: { $0.action == #selector(openStar(_:)) }) {
+        NSLog("🔍 Recent Stars submenu opened - clearing badge")
+        notificationManager?.clearBadge()
+      }
+    }
+  }
+
   func updateMenu() {
     NSLog("🔍 updateMenu called, recentStars.count = \(recentStars.count)")
     let menu = NSMenu()
@@ -197,9 +208,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Recent Stars submenu
     if !recentStars.isEmpty {
       NSLog("🔍 Adding Recent Stars submenu with \(recentStars.count) stars")
-      let recentItem = NSMenuItem(title: "Recent Stars", action: #selector(clearBadge), keyEquivalent: "")
-      recentItem.target = self
+      let recentItem = NSMenuItem(title: "Recent Stars", action: nil, keyEquivalent: "")
       let recentMenu = NSMenu()
+      recentMenu.delegate = self
 
       let last10 = Array(recentStars.prefix(10))
       for (index, event) in last10.enumerated() {
