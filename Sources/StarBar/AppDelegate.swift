@@ -197,7 +197,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Recent Stars submenu
     if !recentStars.isEmpty {
       NSLog("🔍 Adding Recent Stars submenu with \(recentStars.count) stars")
-      let recentItem = NSMenuItem(title: "Recent Stars", action: nil, keyEquivalent: "")
+      let recentItem = NSMenuItem(title: "Recent Stars", action: #selector(clearBadge), keyEquivalent: "")
+      recentItem.target = self
       let recentMenu = NSMenu()
 
       let last10 = Array(recentStars.prefix(10))
@@ -222,10 +223,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     rescanItem.target = self
     rescanItem.isEnabled = !isScanning
     menu.addItem(rescanItem)
-
-    let clearItem = NSMenuItem(title: "Clear Badge", action: #selector(clearBadge), keyEquivalent: "")
-    clearItem.target = self
-    menu.addItem(clearItem)
 
     menu.addItem(NSMenuItem.separator())
 
@@ -780,7 +777,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
       NSLog("⭐ Showing notification for \(repo) from @\(sender.login)")
       notificationManager?.showStarNotification(repo: repo, user: sender.login)
-      notificationManager?.incrementBadge()
       updateMenu()
       saveConfig()
       NSLog("⭐ Star notification sent!")
