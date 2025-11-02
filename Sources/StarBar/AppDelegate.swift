@@ -743,6 +743,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     NSLog("Network changed, restarting tunnel...")
     tunnelManager?.stop()
     webhookServer?.stop()
+
+    // Wait for port to fully release before restarting
+    try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+
     await startTunnel()
   }
 
