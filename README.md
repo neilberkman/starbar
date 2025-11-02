@@ -15,30 +15,38 @@ Real-time GitHub star notifications in your Mac menu bar.
 ### Requirements
 
 - macOS 13.0+
-- Homebrew (for cloudflared)
+- ngrok account (free tier works)
 
 ### Steps
 
-1. Install cloudflared:
+1. Install ngrok:
 
    ```bash
-   brew install cloudflare/cloudflare/cloudflared
+   brew install ngrok
    ```
 
-2. Download StarBar.app from [Releases](https://github.com/yourusername/starbar/releases)
+2. Configure ngrok with your authtoken:
 
-3. Move to Applications:
+   ```bash
+   ngrok config add-authtoken YOUR_AUTHTOKEN
+   ```
+
+   Get your authtoken at: https://dashboard.ngrok.com/get-started/your-authtoken
+
+3. Download StarBar.app from [Releases](https://github.com/yourusername/starbar/releases)
+
+4. Move to Applications:
 
    ```bash
    mv StarBar.app /Applications/
    ```
 
-4. First launch (bypass Gatekeeper):
+5. First launch (bypass Gatekeeper):
    - Right-click StarBar.app
    - Click "Open"
    - Click "Open" in the dialog
 
-5. Create GitHub token:
+6. Create GitHub token:
    - Visit: https://github.com/settings/tokens/new?scopes=repo,admin:repo_hook
    - Generate token
    - Paste in StarBar setup window
