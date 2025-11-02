@@ -184,9 +184,20 @@ class TunnelManager {
     tunnelURL = nil
   }
 
-  enum TunnelError: Error {
+  enum TunnelError: Error, LocalizedError {
     case ngrokNotInstalled
     case urlParseTimeout
     case alreadyStarting
+
+    var errorDescription: String? {
+      switch self {
+      case .ngrokNotInstalled:
+        return "ngrok not found. Please install it: brew install ngrok && ngrok config add-authtoken YOUR_TOKEN"
+      case .urlParseTimeout:
+        return "Failed to get tunnel URL - ngrok might not be configured. Run: ngrok config add-authtoken YOUR_TOKEN"
+      case .alreadyStarting:
+        return "Tunnel is already starting"
+      }
+    }
   }
 }
