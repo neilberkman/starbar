@@ -5,7 +5,6 @@ class TunnelManager {
   private(set) var tunnelURL: String?
   private var outputPipe = Pipe()
   private var errorPipe = Pipe()
-  private var healthCheckTask: Task<Void, Never>?
   private var isStarting = false
   var onTunnelURLChanged: ((String) -> Void)?
   var onTunnelDied: (() -> Void)?
@@ -77,15 +76,12 @@ class TunnelManager {
     let ngrokPath = String(data: whichData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "ngrok"
     NSLog("→ Found ngrok at: \(ngrokPath)")
 
-    // Clean up any orphaned ngrok tunnels from previous runs on this port
+    // Kill ALL ngrok processes to ensure clean state
     let cleanupProcess = Process()
-    cleanupProcess.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-    cleanupProcess.arguments = ["-f", "ngrok http \(port)"]
+    cleanupProcess.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+    cleanupProcess.arguments = ["-9", "ngrok"]
     try? cleanupProcess.run()
     cleanupProcess.waitUntilExit()
-
-    // Give it a moment to clean up
-    try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
 
     // Create fresh pipes for each attempt
     outputPipe = Pipe()
@@ -111,9 +107,6 @@ class TunnelManager {
 
     try process?.run()
 
-    // Wait for ngrok to start and query its API
-    try await Task.sleep(nanoseconds: 2_000_000_000)  // 2s for ngrok to start
-
     // Try both common ngrok API ports (4040 is default, but it may use 4041 if 4040 is busy)
     let apiPorts = [4040, 4041]
 
@@ -133,9 +126,6 @@ class TunnelManager {
             tunnelURL = publicURL
             NSLog("✓ Tunnel URL extracted from API (port \(port)): \(publicURL)")
 
-            // Start health monitoring
-            startHealthMonitoring()
-
             // Notify callback that URL is ready
             onTunnelURLChanged?(publicURL)
 
@@ -154,31 +144,8 @@ class TunnelManager {
     throw TunnelError.urlParseTimeout
   }
 
-  // Ngrok URLs don't change once started, so no need to monitor for changes
-
-  private func startHealthMonitoring() {
-    healthCheckTask?.cancel()
-
-    healthCheckTask = Task {
-      // Check every 60s if process is still alive
-      while !Task.isCancelled {
-        try? await Task.sleep(nanoseconds: 60_000_000_000)  // 60s
-
-        guard let proc = process, !proc.isRunning else {
-          if process != nil {
-            NSLog("💀 Ngrok process died")
-            onTunnelDied?()
-          }
-          break
-        }
-      }
-    }
-  }
-
   func stop() {
     process?.terminationHandler = nil
-    healthCheckTask?.cancel()
-    healthCheckTask = nil
     process?.terminate()
     process = nil
     tunnelURL = nil
