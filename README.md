@@ -12,20 +12,15 @@ Real-time GitHub star notifications in your Mac menu bar.
 
 ## Installation
 
-### Requirements
+### via Homebrew (recommended)
 
-- macOS 13.0+
-- ngrok account (free tier works)
+```bash
+brew install neilberkman/starbar/starbar
+```
 
-### Steps
+This automatically installs ngrok as a dependency. After installation:
 
-1. Install ngrok:
-
-   ```bash
-   brew install ngrok
-   ```
-
-2. Configure ngrok with your authtoken:
+1. Configure ngrok:
 
    ```bash
    ngrok config add-authtoken YOUR_AUTHTOKEN
@@ -33,20 +28,45 @@ Real-time GitHub star notifications in your Mac menu bar.
 
    Get your authtoken at: https://dashboard.ngrok.com/get-started/your-authtoken
 
-3. Download StarBar.app from [Releases](https://github.com/yourusername/starbar/releases)
+2. Launch StarBar from Applications
 
-4. Move to Applications:
+3. Create GitHub token:
+   - Visit: https://github.com/settings/tokens/new?scopes=repo,admin:repo_hook
+   - Generate token
+   - Paste in StarBar setup window
+
+### Manual Installation
+
+**Requirements:**
+
+- macOS 13.0+
+- ngrok account (free tier works)
+
+**Steps:**
+
+1. Install and configure ngrok:
+
+   ```bash
+   brew install ngrok
+   ngrok config add-authtoken YOUR_AUTHTOKEN
+   ```
+
+   Get your authtoken at: https://dashboard.ngrok.com/get-started/your-authtoken
+
+2. Download StarBar.app from [Releases](https://github.com/neilberkman/starbar/releases)
+
+3. Move to Applications:
 
    ```bash
    mv StarBar.app /Applications/
    ```
 
-5. First launch (bypass Gatekeeper):
+4. First launch (bypass Gatekeeper):
    - Right-click StarBar.app
    - Click "Open"
    - Click "Open" in the dialog
 
-6. Create GitHub token:
+5. Create GitHub token:
    - Visit: https://github.com/settings/tokens/new?scopes=repo,admin:repo_hook
    - Generate token
    - Paste in StarBar setup window
