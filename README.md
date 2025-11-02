@@ -80,10 +80,9 @@ This automatically installs ngrok as a dependency. After installation:
 ## Building from Source
 
 ```bash
-git clone https://github.com/yourusername/starbar
+git clone https://github.com/neilberkman/starbar
 cd starbar
-open StarBar.xcodeproj
-# Build in Xcode
+swift build -c release
 ```
 
 ## License
