@@ -89,6 +89,9 @@ class GitHubAPI {
     var allRepos: [GitHubRepo] = []
     var page = 1
 
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+
     while true {
       let url = URL(string: "\(baseURL)/user/repos?per_page=100&page=\(page)")!
       var request = URLRequest(url: url)
@@ -96,15 +99,15 @@ class GitHubAPI {
       request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
 
       let (data, _) = try await URLSession.shared.data(for: request)
-      let repos = try JSONDecoder().decode([GitHubRepo].self, from: data)
+      let repos = try decoder.decode([GitHubRepo].self, from: data)
 
       if repos.isEmpty { break }
       allRepos.append(contentsOf: repos)
       page += 1
     }
 
-    // Filter to only repos YOU OWN with stars
-    return allRepos.filter { $0.stargazersCount > 0 && $0.owner.login == authenticatedUser }
+    // Filter to only repos YOU OWN (include 0-star repos!)
+    return allRepos.filter { $0.owner.login == authenticatedUser }
   }
 
   func fetchStargazers(repo: String, since: Date?, totalStars: Int = 0) async throws -> [Stargazer] {

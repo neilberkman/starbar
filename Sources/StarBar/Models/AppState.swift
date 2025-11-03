@@ -35,10 +35,12 @@ struct RepoState: Codable {
   var lastStarAt: Date?
   var starCount: Int
   var webhookSecret: String?
+  var createdAt: Date
 
   enum CodingKeys: String, CodingKey {
     case lastStarAt = "last_star_at"
     case starCount = "star_count"
     case webhookSecret = "webhook_secret"
+    case createdAt = "created_at"
   }
 }

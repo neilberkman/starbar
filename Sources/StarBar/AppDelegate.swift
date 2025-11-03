@@ -595,11 +595,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
       if lastStar > sixMonthsAgo { return true }
     }
 
-    // 3. Very new repos (created in last 3 months) - use first star as proxy for creation
-    if let lastStar = repoState.lastStarAt {
-      let threeMonthsAgo = Calendar.current.date(byAdding: .month, value: -3, to: Date())!
-      if lastStar > threeMonthsAgo { return true }
-    }
+    // 3. Very new repos (created in last 3 months) - even with 0 stars!
+    let threeMonthsAgo = Calendar.current.date(byAdding: .month, value: -3, to: Date())!
+    if repoState.createdAt > threeMonthsAgo { return true }
 
     return false
   }
@@ -637,7 +635,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
 
         // Store the webhook secret for validation
         if config?.state.repos[repoName] == nil {
-          config?.state.repos[repoName] = RepoState(lastStarAt: nil, starCount: 0, webhookSecret: secret)
+          // This shouldn't happen (repo should exist from scan), but handle it defensively
+          config?.state.repos[repoName] = RepoState(
+            lastStarAt: nil,
+            starCount: 0,
+            webhookSecret: secret,
+            createdAt: Date()  // Fallback to now if not scanned yet
+          )
         } else {
           config?.state.repos[repoName]?.webhookSecret = secret
         }
@@ -678,8 +682,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
       saveConfig()
       logger.debug("🔍 performInitialScan: Config saved with \(self.config?.state.trackedRepos.count ?? 0) repos")
 
-      // Create repo name to star count map
+      // Create repo name to star count and createdAt maps
       let repoStarCounts = Dictionary(uniqueKeysWithValues: repos.map { ($0.fullName, $0.stargazersCount) })
+      let repoCreatedDates = Dictionary(uniqueKeysWithValues: repos.map { ($0.fullName, $0.createdAt) })
 
       // Poll for new stars
       for repoName in config?.state.trackedRepos ?? [] {
@@ -714,10 +719,17 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
         }
 
         // Update state
+        let createdAt = repoCreatedDates[repoName] ?? Date()
         if config?.state.repos[repoName] == nil {
-          config?.state.repos[repoName] = RepoState(starCount: actualStarCount)
+          config?.state.repos[repoName] = RepoState(
+            lastStarAt: nil,
+            starCount: actualStarCount,
+            webhookSecret: nil,
+            createdAt: createdAt
+          )
         } else {
           config?.state.repos[repoName]?.starCount = actualStarCount
+          config?.state.repos[repoName]?.createdAt = createdAt
         }
 
         if let mostRecent = sortedStars.first {
@@ -802,7 +814,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
 
     // Update state
     if config?.state.repos[repo] == nil {
-      config?.state.repos[repo] = RepoState(starCount: payload.repository.stargazersCount)
+      config?.state.repos[repo] = RepoState(
+        lastStarAt: payload.starredAt,
+        starCount: payload.repository.stargazersCount,
+        webhookSecret: nil,
+        createdAt: Date()  // Fallback to now if we don't have creation date
+      )
     }
     config?.state.repos[repo]?.lastStarAt = payload.starredAt ?? Date()
     config?.state.repos[repo]?.starCount = payload.repository.stargazersCount

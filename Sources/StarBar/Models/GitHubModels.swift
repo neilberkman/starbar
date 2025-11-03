@@ -4,6 +4,7 @@ struct GitHubRepo: Codable {
   let fullName: String
   let stargazersCount: Int
   let owner: RepoOwner
+  let createdAt: Date
 
   struct RepoOwner: Codable {
     let login: String
@@ -13,6 +14,7 @@ struct GitHubRepo: Codable {
     case fullName = "full_name"
     case stargazersCount = "stargazers_count"
     case owner
+    case createdAt = "created_at"
   }
 }
 
