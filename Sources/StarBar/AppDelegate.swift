@@ -109,13 +109,38 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
   }
 
   func showNgrokError() {
-    let alert = NSAlert()
-    alert.messageText = "ngrok Not Found"
-    alert.informativeText = "StarBar requires ngrok to create tunnels.\n\nInstall with: brew install ngrok\nThen configure: ngrok config add-authtoken YOUR_TOKEN\n\nGet your token at: https://dashboard.ngrok.com/get-started/your-authtoken"
-    alert.alertStyle = .critical
-    alert.addButton(withTitle: "Quit")
-    alert.runModal()
-    NSApplication.shared.terminate(nil)
+    // Don't block with modal - show alert and update menu to show error state
+    DispatchQueue.main.async {
+      let alert = NSAlert()
+      alert.messageText = "ngrok Not Found"
+      alert.informativeText = "StarBar requires ngrok to create tunnels.\n\nInstall with: brew install ngrok\nThen configure: ngrok config add-authtoken YOUR_TOKEN\n\nGet your token at: https://dashboard.ngrok.com/get-started/your-authtoken"
+      alert.alertStyle = .critical
+      alert.addButton(withTitle: "Quit")
+
+      let response = alert.runModal()
+      if response == .alertFirstButtonReturn {
+        NSApplication.shared.terminate(nil)
+      }
+    }
+
+    // Show error in menu bar so they can still quit
+    updateMenuWithError("ngrok not found - install with: brew install ngrok")
+  }
+
+  func updateMenuWithError(_ errorMessage: String) {
+    let menu = NSMenu()
+
+    let errorItem = NSMenuItem(title: errorMessage, action: nil, keyEquivalent: "")
+    errorItem.isEnabled = false
+    menu.addItem(errorItem)
+
+    menu.addItem(NSMenuItem.separator())
+
+    let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    quitItem.isEnabled = true
+    menu.addItem(quitItem)
+
+    statusItem?.menu = menu
   }
 
   func setupMenuBar() {
