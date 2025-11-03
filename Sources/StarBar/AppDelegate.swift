@@ -245,8 +245,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     menu.addItem(launchItem)
 
     menu.addItem(NSMenuItem.separator())
-    menu.addItem(
-      NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+    let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+    quitItem.isEnabled = true  // NEVER disable quit
+    menu.addItem(quitItem)
 
     statusItem?.menu = menu
   }
