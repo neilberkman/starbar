@@ -43,4 +43,21 @@ struct RepoState: Codable {
     case webhookSecret = "webhook_secret"
     case createdAt = "created_at"
   }
+
+  // Custom decoder to handle legacy configs without createdAt
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    lastStarAt = try container.decodeIfPresent(Date.self, forKey: .lastStarAt)
+    starCount = try container.decode(Int.self, forKey: .starCount)
+    webhookSecret = try container.decodeIfPresent(String.self, forKey: .webhookSecret)
+    // Default to lastStarAt or current date if createdAt missing (for legacy configs)
+    createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? lastStarAt ?? Date()
+  }
+
+  init(lastStarAt: Date?, starCount: Int, webhookSecret: String?, createdAt: Date) {
+    self.lastStarAt = lastStarAt
+    self.starCount = starCount
+    self.webhookSecret = webhookSecret
+    self.createdAt = createdAt
+  }
 }
