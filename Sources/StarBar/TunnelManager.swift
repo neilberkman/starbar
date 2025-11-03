@@ -59,25 +59,27 @@ class TunnelManager {
   }
 
   private func attemptStart(port: Int, timeout: TimeInterval) async throws -> String {
-    // Check if ngrok is installed and get its path
-    let checkProcess = Process()
-    checkProcess.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-    checkProcess.arguments = ["ngrok"]
+    // Find ngrok by checking common installation locations
+    // GUI apps don't get shell PATH, so we check directly
+    let commonPaths = [
+      "/opt/homebrew/bin/ngrok",  // Apple Silicon Homebrew
+      "/usr/local/bin/ngrok",      // Intel Homebrew
+      "/usr/bin/ngrok",            // System install
+    ]
 
-    let whichPipe = Pipe()
-    checkProcess.standardOutput = whichPipe
+    var ngrokPath: String?
+    for path in commonPaths {
+      if FileManager.default.fileExists(atPath: path) {
+        ngrokPath = path
+        break
+      }
+    }
 
-    try checkProcess.run()
-    checkProcess.waitUntilExit()
-
-    guard checkProcess.terminationStatus == 0 else {
+    guard let foundPath = ngrokPath else {
       throw TunnelError.ngrokNotInstalled
     }
 
-    // Get ngrok path from which output
-    let whichData = whichPipe.fileHandleForReading.readDataToEndOfFile()
-    let ngrokPath = String(data: whichData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "ngrok"
-    logger.info("→ Found ngrok at: \(ngrokPath)")
+    logger.info("→ Found ngrok at: \(foundPath)")
 
     // Kill ALL ngrok processes to ensure clean state
     let cleanupProcess = Process()
@@ -92,7 +94,7 @@ class TunnelManager {
 
     // Start tunnel using discovered path
     process = Process()
-    process?.executableURL = URL(fileURLWithPath: ngrokPath)
+    process?.executableURL = URL(fileURLWithPath: foundPath)
     process?.arguments = ["http", "\(port)"]
 
     process?.standardOutput = outputPipe
