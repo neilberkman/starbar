@@ -99,13 +99,20 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
   }
 
   func isNgrokInstalled() -> Bool {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-    process.arguments = ["ngrok"]
-    process.standardOutput = Pipe()
-    try? process.run()
-    process.waitUntilExit()
-    return process.terminationStatus == 0
+    // Check common ngrok locations since GUI apps don't get shell PATH
+    let commonPaths = [
+      "/opt/homebrew/bin/ngrok",  // Apple Silicon Homebrew
+      "/usr/local/bin/ngrok",      // Intel Homebrew
+      "/usr/bin/ngrok",            // System install
+    ]
+
+    for path in commonPaths {
+      if FileManager.default.fileExists(atPath: path) {
+        return true
+      }
+    }
+
+    return false
   }
 
   func showNgrokError() {
