@@ -2,6 +2,8 @@ import Cocoa
 import ServiceManagement
 import os.log
 
+private let logger = Logger(subsystem: "com.xuku.starbar", category: "app")
+
 extension String {
   func appendingToFile(at path: String) throws {
     let url = URL(fileURLWithPath: path)
@@ -77,21 +79,21 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     setupMenuBar()
     loadConfig()
 
-    NSLog("📱 App launched, config loaded")
-    NSLog("📱 Token exists: \(!(config?.githubToken.isEmpty ?? true))")
+    logger.info("📱 App launched, config loaded")
+    logger.info("📱 Token exists: \(!(self.config?.githubToken.isEmpty ?? true))")
 
     // Check if cloudflared is installed
     if !isCloudflaredInstalled() {
-      NSLog("⚠️ cloudflared not installed")
+      logger.warning("⚠️ cloudflared not installed")
       showCloudflaredError()
       return
     }
 
     if config?.githubToken.isEmpty ?? true {
-      NSLog("📱 No token, showing setup window")
+      logger.info("📱 No token, showing setup window")
       showSetupWindow()
     } else {
-      NSLog("📱 Token found, starting services")
+      logger.info("📱 Token found, starting services")
       startServices()
     }
   }
@@ -163,7 +165,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
   }
 
   public func menuNeedsUpdate(_ menu: NSMenu) {
-    NSLog("🔍 menuNeedsUpdate called - updating timestamps")
+    logger.debug("🔍 menuNeedsUpdate called - updating timestamps")
     // Find the "Recent Stars" submenu and update timestamps
     for item in menu.items {
       if item.title == "Recent Stars", let submenu = item.submenu {
@@ -185,14 +187,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     if menu.title == "" {  // Submenus don't have titles by default
       // Check if this is the Recent Stars submenu by checking parent
       if let _ = menu.items.first(where: { $0.action == #selector(openStar(_:)) }) {
-        NSLog("🔍 Recent Stars submenu opened - clearing badge")
+        logger.debug("🔍 Recent Stars submenu opened - clearing badge")
         notificationManager?.clearBadge()
       }
     }
   }
 
   func updateMenu() {
-    NSLog("🔍 updateMenu called, recentStars.count = \(recentStars.count)")
+    logger.debug("🔍 updateMenu called, recentStars.count = \(self.recentStars.count)")
     let menu = NSMenu()
     menu.delegate = self
 
@@ -207,7 +209,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
 
     // Recent Stars submenu
     if !recentStars.isEmpty {
-      NSLog("🔍 Adding Recent Stars submenu with \(recentStars.count) stars")
+      logger.debug("🔍 Adding Recent Stars submenu with \(self.recentStars.count) stars")
       let recentItem = NSMenuItem(title: "Recent Stars", action: nil, keyEquivalent: "")
       let recentMenu = NSMenu()
       recentMenu.delegate = self
@@ -264,7 +266,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
   func getWebhookStatus() -> String {
     // Check tunnel status
     let tunnelStatus: String
-    if let url = tunnelManager?.tunnelURL, !url.isEmpty {
+    if let url = self.tunnelManager?.tunnelURL, !url.isEmpty {
       tunnelStatus = "✓ Tunnel Active"
     } else {
       tunnelStatus = "✗ Tunnel Offline"
@@ -401,37 +403,37 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
   }
 
   func startServicesAsync() async {
-    NSLog("→ startServicesAsync: CALLED")
+    logger.info("→ startServicesAsync: CALLED")
     guard let token = config?.githubToken, !token.isEmpty else {
-      NSLog("⚠️ startServicesAsync: No token found in config")
+      logger.warning("⚠️ startServicesAsync: No token found in config")
       return
     }
 
-    NSLog("✓ startServicesAsync: Starting with token: \(token.prefix(7))...")
+    logger.info("✓ startServicesAsync: Starting with token: \(token.prefix(7))...")
     gitHubAPI = GitHubAPI(token: token)
 
     // Create NotificationManager FIRST so it's ready for webhooks
     DispatchQueue.main.async {
       self.notificationManager = NotificationManager()
       self.notificationManager?.statusItem = self.statusItem
-      NSLog("✓ NotificationManager created")
+      logger.info("✓ NotificationManager created")
     }
 
     // Start tunnel in background - don't block scan
     Task {
-      NSLog("→ startServicesAsync: Starting tunnel in background...")
+      logger.info("→ startServicesAsync: Starting tunnel in background...")
       await startTunnel()
-      NSLog("→ startServicesAsync: Setting up webhooks...")
+      logger.info("→ startServicesAsync: Setting up webhooks...")
       await setupWebhooks()
     }
 
     // Do scan immediately without waiting for tunnel
-    NSLog("→ startServicesAsync: Performing initial scan...")
+    logger.info("→ startServicesAsync: Performing initial scan...")
     await performInitialScan()
-    NSLog("→ startServicesAsync: Setting up network monitoring...")
+    logger.info("→ startServicesAsync: Setting up network monitoring...")
     setupNetworkMonitoring()
 
-    NSLog("✓ startServicesAsync: All services started successfully")
+    logger.info("✓ startServicesAsync: All services started successfully")
   }
 
   @objc func handleSetupQuit() {
@@ -445,21 +447,21 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
   }
 
   func startTunnel() async {
-    print("→ startTunnel: Creating tunnel manager")
+    logger.info("→ startTunnel: Creating tunnel manager")
     tunnelManager = TunnelManager()
     webhookServer = WebhookServer()
 
     // Setup tunnel URL change handler
-    tunnelManager?.onTunnelURLChanged = { [weak self] newURL in
-      NSLog("🔄 Tunnel URL changed to: \(newURL)")
+    self.tunnelManager?.onTunnelURLChanged = { [weak self] newURL in
+      logger.info("🔄 Tunnel URL changed to: \(newURL)")
       Task {
         await self?.setupWebhooks()
       }
     }
 
     // Setup tunnel death handler
-    tunnelManager?.onTunnelDied = { [weak self] in
-      NSLog("💀 Tunnel died, restarting...")
+    self.tunnelManager?.onTunnelDied = { [weak self] in
+      logger.error("💀 Tunnel died, restarting...")
       Task {
         await self?.handleNetworkChange()
       }
@@ -477,29 +479,29 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     }
 
     // Start webhook server
-    print("→ startTunnel: Starting webhook server")
+    logger.info("→ startTunnel: Starting webhook server")
     do {
       try webhookServer?.start()
-      NSLog("✓ Webhook server started successfully")
+      logger.info("✓ Webhook server started successfully")
     } catch {
-      NSLog("❌ Webhook server failed to start: \(error)")
+      logger.error("❌ Webhook server failed to start: \(error)")
     }
 
     // Start tunnel
-    print("→ startTunnel: Starting cloudflared tunnel")
+    logger.info("→ startTunnel: Starting cloudflared tunnel")
     do {
-      let tunnelURL = try await tunnelManager?.start() ?? ""
-      print("✓ Tunnel started: \(tunnelURL)")
-      print("✓ tunnelManager.tunnelURL = \(tunnelManager?.tunnelURL ?? "nil")")
+      let tunnelURL = try await self.tunnelManager?.start() ?? ""
+      logger.info("✓ Tunnel started: \(tunnelURL)")
+      logger.info("✓ tunnelManager.tunnelURL = \(self.tunnelManager?.tunnelURL ?? "nil")")
     } catch {
-      print("❌ Tunnel error: \(error)")
+      logger.error("❌ Tunnel error: \(error)")
     }
   }
 
   func setupWebhooks() async {
     // Prevent concurrent webhook setup using actor
     guard await webhookCoordinator.trySetup() else {
-      NSLog("⚠️ Already setting up webhooks, skipping duplicate call")
+      logger.warning("⚠️ Already setting up webhooks, skipping duplicate call")
       return
     }
 
@@ -509,14 +511,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
       }
     }
 
-    guard let tunnelURL = tunnelManager?.tunnelURL else {
-      print("❌ setupWebhooks: No tunnel URL available!")
-      print("❌ tunnelManager exists: \(tunnelManager != nil)")
-      print("❌ tunnelManager.tunnelURL: \(tunnelManager?.tunnelURL ?? "nil")")
+    guard let tunnelURL = self.tunnelManager?.tunnelURL else {
+      logger.error("❌ setupWebhooks: No tunnel URL available!")
+      logger.error("❌ tunnelManager exists: \(self.tunnelManager != nil)")
+      logger.error("❌ tunnelManager.tunnelURL: \(self.tunnelManager?.tunnelURL ?? "nil")")
       return
     }
 
-    print("✓ setupWebhooks: Using tunnel URL: \(tunnelURL)")
+    logger.info("✓ setupWebhooks: Using tunnel URL: \(tunnelURL)")
 
     // Clean old webhooks
     await cleanOldWebhooks()
@@ -537,11 +539,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
         for webhook in webhooks {
           if webhook.url.contains("trycloudflare.com") {
             try await api.deleteRepoWebhook(repo: repoName, webhookId: webhook.id)
-            NSLog("Deleted old webhook from \(repoName): \(webhook.id)")
+            logger.info("Deleted old webhook from \(repoName): \(webhook.id)")
           }
         }
       } catch {
-        NSLog("Error cleaning webhooks for \(repoName): \(error)")
+        logger.error("Error cleaning webhooks for \(repoName): \(error)")
       }
     }
   }
@@ -573,7 +575,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
 
     // Filter to only active repos
     let activeRepos = (config?.state.trackedRepos ?? []).filter { shouldCreateWebhook(for: $0) }
-    NSLog("Creating webhooks for \(activeRepos.count)/\(config?.state.trackedRepos.count ?? 0) active repos")
+    logger.info("Creating webhooks for \(activeRepos.count)/\(self.config?.state.trackedRepos.count ?? 0) active repos")
 
     // Create webhook for each active repo
     var successCount = 0
@@ -585,13 +587,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
           $0.config.url.contains("trycloudflare.com") || $0.config.url.contains("ngrok.app")
         }
         if !ourOldHooks.isEmpty {
-          NSLog("Found \(ourOldHooks.count) old StarBar webhooks for \(repoName), deleting...")
+          logger.info("Found \(ourOldHooks.count) old StarBar webhooks for \(repoName), deleting...")
           for hook in ourOldHooks {
             do {
               try await api.deleteRepoWebhook(repo: repoName, webhookId: hook.id)
-              NSLog("✓ Deleted old StarBar webhook \(hook.id) (\(hook.config.url))")
+              logger.info("✓ Deleted old StarBar webhook \(hook.id) (\(hook.config.url))")
             } catch {
-              NSLog("⚠️ Failed to delete webhook \(hook.id): \(error)")
+              logger.warning("⚠️ Failed to delete webhook \(hook.id): \(error)")
             }
           }
         }
@@ -608,23 +610,23 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
         saveConfig()
 
         successCount += 1
-        NSLog("✓ Created webhook for \(repoName): \(webhookId)")
+        logger.info("✓ Created webhook for \(repoName): \(webhookId)")
       } catch {
-        NSLog("Error creating webhook for \(repoName): \(error)")
+        logger.error("Error creating webhook for \(repoName): \(error)")
       }
     }
 
-    NSLog("Created \(successCount)/\(activeRepos.count) webhooks for active repos")
+    logger.info("Created \(successCount)/\(activeRepos.count) webhooks for active repos")
   }
 
   func performInitialScan() async {
-    NSLog("🔍 performInitialScan: START")
+    logger.debug("🔍 performInitialScan: START")
     guard let api = gitHubAPI else {
-      NSLog("❌ performInitialScan: No GitHub API instance!")
+      logger.error("❌ performInitialScan: No GitHub API instance!")
       return
     }
 
-    NSLog("🔍 performInitialScan: Setting scanning state...")
+    logger.debug("🔍 performInitialScan: Setting scanning state...")
     DispatchQueue.main.async {
       self.setScanning(true)
     }
@@ -634,13 +636,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
 
     do {
       // Fetch repos
-      NSLog("🔍 performInitialScan: Fetching repos from GitHub API...")
+      logger.debug("🔍 performInitialScan: Fetching repos from GitHub API...")
       let repos = try await api.fetchRepos()
-      NSLog("🔍 performInitialScan: Fetched \(repos.count) repos with stars")
+      logger.debug("🔍 performInitialScan: Fetched \(repos.count) repos with stars")
       config?.state.trackedRepos = repos.map { $0.fullName }
-      NSLog("🔍 performInitialScan: Updated tracked_repos, saving config...")
+      logger.debug("🔍 performInitialScan: Updated tracked_repos, saving config...")
       saveConfig()
-      NSLog("🔍 performInitialScan: Config saved with \(config?.state.trackedRepos.count ?? 0) repos")
+      logger.debug("🔍 performInitialScan: Config saved with \(self.config?.state.trackedRepos.count ?? 0) repos")
 
       // Create repo name to star count map
       let repoStarCounts = Dictionary(uniqueKeysWithValues: repos.map { ($0.fullName, $0.stargazersCount) })
@@ -650,10 +652,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
         let lastStarAt = config?.state.repos[repoName]?.lastStarAt
         let isFirstScan = lastStarAt == nil
         let actualStarCount = repoStarCounts[repoName] ?? 0
-        NSLog("🔍 Fetching stargazers for \(repoName), totalStars=\(actualStarCount), isFirstScan=\(isFirstScan)")
+        logger.debug("🔍 Fetching stargazers for \(repoName), totalStars=\(actualStarCount), isFirstScan=\(isFirstScan)")
         // Always fetch recent stars on app startup (don't filter by lastStarAt)
         let newStars = try await api.fetchStargazers(repo: repoName, since: nil, totalStars: actualStarCount)
-        NSLog("🔍 Got \(newStars.count) stars for \(repoName)")
+        logger.debug("🔍 Got \(newStars.count) stars for \(repoName)")
 
         // Sort stars newest-first
         let sortedStars = newStars.sorted { $0.starredAt > $1.starredAt }
@@ -695,22 +697,22 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
         recentStars = Array(recentStars.prefix(50))
       }
 
-      NSLog("🔍 performInitialScan: recentStars count = \(recentStars.count)")
-      if recentStars.isEmpty {
-        NSLog("⚠️ No recent stars found!")
+      logger.debug("🔍 performInitialScan: recentStars count = \(self.recentStars.count)")
+      if self.recentStars.isEmpty {
+        logger.warning("⚠️ No recent stars found!")
       } else {
-        NSLog("✓ Found \(recentStars.count) recent stars, newest: \(recentStars.first?.repo ?? "unknown")")
+        logger.info("✓ Found \(self.recentStars.count) recent stars, newest: \(self.recentStars.first?.repo ?? "unknown")")
       }
 
       saveConfig()
 
       // Update menu on main thread
       DispatchQueue.main.async {
-        NSLog("🔍 Updating menu with \(self.recentStars.count) stars")
+        logger.debug("🔍 Updating menu with \(self.recentStars.count) stars")
         self.updateMenu()
       }
     } catch {
-      NSLog("Scan error: \(error)")
+      logger.error("Scan error: \(error)")
     }
 
     DispatchQueue.main.async {
@@ -727,21 +729,21 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
       }
     }
     networkMonitor?.start()
-    NSLog("✓ Network monitoring enabled")
+    logger.info("✓ Network monitoring enabled")
   }
 
   func handleNetworkChange() async {
     // Prevent concurrent network change handling
     guard !isRestartingTunnel else {
-      NSLog("⚠️ Already restarting tunnel, skipping duplicate network change event")
+      logger.warning("⚠️ Already restarting tunnel, skipping duplicate network change event")
       return
     }
 
     isRestartingTunnel = true
     defer { isRestartingTunnel = false }
 
-    NSLog("Network changed, restarting tunnel...")
-    tunnelManager?.stop()
+    logger.info("Network changed, restarting tunnel...")
+    self.tunnelManager?.stop()
     webhookServer?.stop()
 
     // Wait for port to fully release before restarting
@@ -753,7 +755,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
   func handleStarEvent(payload: WebhookPayload) {
     // Ignore ping/test webhooks (no action field)
     guard let action = payload.action, let sender = payload.sender else {
-      NSLog("✓ Webhook ping received, ignoring")
+      logger.info("✓ Webhook ping received, ignoring")
       return
     }
 
@@ -771,11 +773,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     config?.state.repos[repo]?.lastStarAt = payload.starredAt ?? Date()
     config?.state.repos[repo]?.starCount = payload.repository.stargazersCount
 
-    NSLog("📬 Webhook received: action=\(action), repo=\(repo), user=@\(sender.login)")
+    logger.info("📬 Webhook received: action=\(action), repo=\(repo), user=@\(sender.login)")
 
     if action == "started" {
       // New star (GitHub uses "started" for star events)
-      NSLog("⭐ New star webhook received")
+      logger.info("⭐ New star webhook received")
       let event = StarEvent(
         repo: repo,
         user: sender.login,
@@ -790,14 +792,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
         recentStars = Array(recentStars.prefix(50))
       }
 
-      NSLog("⭐ Showing notification for \(repo) from @\(sender.login)")
+      logger.info("⭐ Showing notification for \(repo) from @\(sender.login)")
       notificationManager?.showStarNotification(repo: repo, user: sender.login)
       updateMenu()
       saveConfig()
-      NSLog("⭐ Star notification sent!")
+      logger.info("⭐ Star notification sent!")
     } else if action == "deleted" {
       // Unstar - just update the count, don't show notification
-      NSLog("⭐ Unstar: \(repo) by @\(sender.login)")
+      logger.info("⭐ Unstar: \(repo) by @\(sender.login)")
     }
 
     saveConfig()
@@ -842,7 +844,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
   public func applicationWillTerminate(_ notification: Notification) {
     // Cleanup
     webhookServer?.stop()
-    tunnelManager?.stop()
+    self.tunnelManager?.stop()
     networkMonitor?.stop()
     saveConfig()
   }

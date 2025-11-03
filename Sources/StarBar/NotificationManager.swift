@@ -1,5 +1,8 @@
 import Cocoa
 import UserNotifications
+import os.log
+
+private let logger = Logger(subsystem: "com.xuku.starbar", category: "notificationmanager")
 
 class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   private(set) var badgeCount = 0
@@ -16,11 +19,11 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // Not needed for osascript notifications
     // UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
     //   if let error = error {
-    //     NSLog("❌ Notification permission error: \(error)")
+    //     logger.error("❌ Notification permission error: \(error)")
     //   } else if granted {
-    //     NSLog("✓ Notification permissions granted")
+    //     logger.info("✓ Notification permissions granted")
     //   } else {
-    //     NSLog("⚠️ Notification permissions denied")
+    //     logger.warning("⚠️ Notification permissions denied")
     //   }
     // }
   }
@@ -37,9 +40,9 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     do {
       try task.run()
-      NSLog("✓ Notification sent via osascript")
+      logger.info("✓ Notification sent via osascript")
     } catch {
-      NSLog("❌ Failed to show notification: \(error)")
+      logger.error("❌ Failed to show notification: \(error)")
     }
 
     incrementBadge()

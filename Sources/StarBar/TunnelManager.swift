@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let logger = Logger(subsystem: "com.xuku.starbar", category: "tunnel")
 
 class TunnelManager {
   private var process: Process?
@@ -23,7 +26,7 @@ class TunnelManager {
   func start(port: Int = 63472, timeout: TimeInterval = 10, maxRetries: Int = 3) async throws -> String {
     // Prevent concurrent starts
     guard !isStarting else {
-      NSLog("⚠️ Tunnel already starting, skipping duplicate start request")
+      logger.warning("⚠️ Tunnel already starting, skipping duplicate start request")
       throw TunnelError.alreadyStarting
     }
     isStarting = true
@@ -36,17 +39,17 @@ class TunnelManager {
       do {
         let url = try await attemptStart(port: port, timeout: timeout)
         if attempt > 1 {
-          NSLog("✓ Tunnel recovered after \(attempt) attempts")
+          logger.info("✓ Tunnel recovered after \(attempt) attempts")
         }
         return url
       } catch {
         lastError = error
-        NSLog("⚠️ Tunnel attempt \(attempt)/\(maxRetries) failed: \(error)")
+        logger.warning("⚠️ Tunnel attempt \(attempt)/\(maxRetries) failed: \(error)")
 
         if attempt < maxRetries {
           // Exponential backoff: 2s, 4s, 8s
           let backoffSeconds = min(pow(2.0, Double(attempt)), 10.0)
-          NSLog("→ Retrying in \(backoffSeconds)s...")
+          logger.info("→ Retrying in \(backoffSeconds)s...")
           try await Task.sleep(nanoseconds: UInt64(backoffSeconds * 1_000_000_000))
         }
       }
@@ -74,7 +77,7 @@ class TunnelManager {
     // Get ngrok path from which output
     let whichData = whichPipe.fileHandleForReading.readDataToEndOfFile()
     let ngrokPath = String(data: whichData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "ngrok"
-    NSLog("→ Found ngrok at: \(ngrokPath)")
+    logger.info("→ Found ngrok at: \(ngrokPath)")
 
     // Kill ALL ngrok processes to ensure clean state
     let cleanupProcess = Process()
@@ -99,7 +102,7 @@ class TunnelManager {
     process?.terminationHandler = { [weak self] proc in
       let reason = proc.terminationReason
       let status = proc.terminationStatus
-      NSLog("💀 Ngrok terminated: reason=\(reason.rawValue) status=\(status)")
+      logger.error("💀 Ngrok terminated: reason=\(reason.rawValue) status=\(status)")
 
       // Restart on ANY termination - we always want the tunnel running
       self?.onTunnelDied?()
@@ -124,7 +127,7 @@ class TunnelManager {
              publicURL.hasPrefix("https://")
           {
             tunnelURL = publicURL
-            NSLog("✓ Tunnel URL extracted from API (port \(port)): \(publicURL)")
+            logger.info("✓ Tunnel URL extracted from API (port \(port)): \(publicURL)")
 
             // Notify callback that URL is ready
             onTunnelURLChanged?(publicURL)
@@ -140,7 +143,7 @@ class TunnelManager {
       try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
     }
 
-    NSLog("❌ Tunnel URL fetch timeout after \(timeout)s")
+    logger.error("❌ Tunnel URL fetch timeout after \(timeout)s")
     throw TunnelError.urlParseTimeout
   }
 

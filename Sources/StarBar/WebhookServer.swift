@@ -1,6 +1,9 @@
 import Foundation
 import Network
 import CryptoKit
+import os.log
+
+private let logger = Logger(subsystem: "com.xuku.starbar", category: "webhookserver")
 
 class WebhookServer {
   private var listener: NWListener?
@@ -11,22 +14,22 @@ class WebhookServer {
   func start(port: UInt16 = 63472) throws {
     // Stop existing listener if any
     if listener != nil {
-      NSLog("⚠️ Webhook server already exists, stopping old one first")
+      logger.warning("⚠️ Webhook server already exists, stopping old one first")
       stop()
     }
 
-    NSLog("→ Creating NWListener on port \(port)")
+    logger.info("→ Creating NWListener on port \(port)")
     let params = NWParameters.tcp
     listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
 
     listener?.newConnectionHandler = { [weak self] connection in
-      NSLog("→ New connection received")
+      logger.info("→ New connection received")
       self?.handleConnection(connection)
     }
 
-    NSLog("→ Starting listener on queue")
+    logger.info("→ Starting listener on queue")
     listener?.start(queue: listenerQueue)
-    NSLog("→ Listener.start() called")
+    logger.info("→ Listener.start() called")
   }
 
   func stop() {
@@ -44,7 +47,7 @@ class WebhookServer {
         [weak self] data, _, isComplete, error in
 
         if let error = error {
-          NSLog("❌ Connection error: \(error)")
+          logger.error("❌ Connection error: \(error)")
           connection.cancel()
           return
         }
@@ -118,7 +121,7 @@ class WebhookServer {
   }
 
   private func handleWebhook(headers: String, body: String) {
-    NSLog("🔌 handleWebhook called, body length: \(body.count)")
+    logger.debug("🔌 handleWebhook called, body length: \(body.count)")
 
     // GitHub sends webhooks as application/x-www-form-urlencoded with payload= parameter
     var jsonString = body
@@ -128,12 +131,12 @@ class WebhookServer {
       let payloadValue = String(body.dropFirst("payload=".count))
       if let decoded = payloadValue.removingPercentEncoding {
         jsonString = decoded
-        NSLog("🔌 Decoded URL-encoded payload")
+        logger.debug("🔌 Decoded URL-encoded payload")
       }
     }
 
     guard let data = jsonString.data(using: .utf8) else {
-      NSLog("❌ Failed to convert body to data")
+      logger.error("❌ Failed to convert body to data")
       return
     }
 
@@ -141,30 +144,30 @@ class WebhookServer {
     let timestamp = Date().timeIntervalSince1970
     let filename = "/tmp/webhook_\(timestamp).json"
     try? jsonString.write(toFile: filename, atomically: true, encoding: .utf8)
-    NSLog("💾 Saved raw webhook to: \(filename)")
+    logger.debug("💾 Saved raw webhook to: \(filename)")
 
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
 
     do {
       let payload = try decoder.decode(WebhookPayload.self, from: data)
-      NSLog("✓ Decoded webhook payload successfully")
+      logger.info("✓ Decoded webhook payload successfully")
 
       // Validate signature if we have a secret for this repo
       if let secret = getWebhookSecret?(payload.repository.fullName) {
         guard validateSignature(headers: headers, body: body, secret: secret) else {
-          NSLog("❌ Invalid webhook signature for \(payload.repository.fullName) - rejecting webhook")
+          logger.error("❌ Invalid webhook signature for \(payload.repository.fullName) - rejecting webhook")
           return
         }
-        NSLog("✓ Webhook signature validated for \(payload.repository.fullName)")
+        logger.info("✓ Webhook signature validated for \(payload.repository.fullName)")
       } else {
-        NSLog("⚠️ No webhook secret found for \(payload.repository.fullName) - skipping validation")
+        logger.warning("⚠️ No webhook secret found for \(payload.repository.fullName) - skipping validation")
       }
 
       onStarReceived?(payload)
     } catch {
-      NSLog("❌ Failed to decode webhook payload: \(error)")
-      NSLog("❌ JSON was: \(String(jsonString.prefix(500)))")
+      logger.error("❌ Failed to decode webhook payload: \(error)")
+      logger.error("❌ JSON was: \(String(jsonString.prefix(500)))")
     }
   }
 
@@ -172,16 +175,16 @@ class WebhookServer {
     // Extract X-Hub-Signature-256 header
     guard let signatureRange = headers.range(of: "X-Hub-Signature-256: ", options: .caseInsensitive),
           let lineEnd = headers[signatureRange.upperBound...].range(of: "\r\n") else {
-      NSLog("❌ Missing X-Hub-Signature-256 header")
+      logger.error("❌ Missing X-Hub-Signature-256 header")
       return false
     }
 
     let receivedSignature = String(headers[signatureRange.upperBound..<lineEnd.lowerBound])
-    NSLog("🔐 Received signature: \(receivedSignature)")
+    logger.debug("🔐 Received signature: \(receivedSignature)")
 
     // GitHub sends the signature as "sha256=<hex>"
     guard receivedSignature.hasPrefix("sha256=") else {
-      NSLog("❌ Invalid signature format")
+      logger.error("❌ Invalid signature format")
       return false
     }
 
@@ -190,7 +193,7 @@ class WebhookServer {
     // Compute HMAC-SHA256 of the raw body
     guard let bodyData = body.data(using: .utf8),
           let secretData = secret.data(using: .utf8) else {
-      NSLog("❌ Failed to convert body or secret to data")
+      logger.error("❌ Failed to convert body or secret to data")
       return false
     }
 
@@ -198,7 +201,7 @@ class WebhookServer {
     let signature = HMAC<SHA256>.authenticationCode(for: bodyData, using: key)
     let computedHex = signature.map { String(format: "%02x", $0) }.joined()
 
-    NSLog("🔐 Computed signature: sha256=\(computedHex)")
+    logger.debug("🔐 Computed signature: sha256=\(computedHex)")
 
     // Constant-time comparison
     return receivedHex.lowercased() == computedHex.lowercased()
