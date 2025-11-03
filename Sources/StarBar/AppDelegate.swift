@@ -82,10 +82,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     logger.info("📱 App launched, config loaded")
     logger.info("📱 Token exists: \(!(self.config?.githubToken.isEmpty ?? true))")
 
-    // Check if cloudflared is installed
-    if !isCloudflaredInstalled() {
-      logger.warning("⚠️ cloudflared not installed")
-      showCloudflaredError()
+    // Check if ngrok is installed
+    if !isNgrokInstalled() {
+      logger.warning("⚠️ ngrok not installed")
+      showNgrokError()
       return
     }
 
@@ -98,20 +98,20 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     }
   }
 
-  func isCloudflaredInstalled() -> Bool {
+  func isNgrokInstalled() -> Bool {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-    process.arguments = ["cloudflared"]
+    process.arguments = ["ngrok"]
     process.standardOutput = Pipe()
     try? process.run()
     process.waitUntilExit()
     return process.terminationStatus == 0
   }
 
-  func showCloudflaredError() {
+  func showNgrokError() {
     let alert = NSAlert()
-    alert.messageText = "Cloudflared Not Found"
-    alert.informativeText = "StarBar requires cloudflared to create tunnels.\n\nInstall with: brew install cloudflared"
+    alert.messageText = "ngrok Not Found"
+    alert.informativeText = "StarBar requires ngrok to create tunnels.\n\nInstall with: brew install ngrok\nThen configure: ngrok config add-authtoken YOUR_TOKEN\n\nGet your token at: https://dashboard.ngrok.com/get-started/your-authtoken"
     alert.alertStyle = .critical
     alert.addButton(withTitle: "Quit")
     alert.runModal()
@@ -488,7 +488,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     }
 
     // Start tunnel
-    logger.info("→ startTunnel: Starting cloudflared tunnel")
+    logger.info("→ startTunnel: Starting ngrok tunnel")
     do {
       let tunnelURL = try await self.tunnelManager?.start() ?? ""
       logger.info("✓ Tunnel started: \(tunnelURL)")
