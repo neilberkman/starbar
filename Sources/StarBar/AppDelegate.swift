@@ -613,11 +613,18 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     var successCount = 0
     for repoName in activeRepos {
       do {
-        // First, delete ONLY our old tunnel webhooks (cloudflare + ngrok) to avoid conflicts
+        // First, delete ALL old tunnel webhooks (cloudflare, ngrok, bore) to avoid conflicts
         let existingHooks = try await api.listRepoWebhooks(repo: repoName)
+
+        // Filter to tunnel webhooks (not pointing to current URL)
         let ourOldHooks = existingHooks.filter {
-          $0.config.url.contains("trycloudflare.com") || $0.config.url.contains("ngrok.app")
+          let hookURL = $0.config.url
+          let isTunnelWebhook = hookURL.contains("trycloudflare.com") ||
+                                 hookURL.contains("ngrok.app")
+          let isNotCurrentURL = hookURL != url
+          return isTunnelWebhook && isNotCurrentURL
         }
+
         if !ourOldHooks.isEmpty {
           logger.info("Found \(ourOldHooks.count) old StarBar webhooks for \(repoName), deleting...")
           for hook in ourOldHooks {
@@ -625,9 +632,16 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
               try await api.deleteRepoWebhook(repo: repoName, webhookId: hook.id)
               logger.info("✓ Deleted old StarBar webhook \(hook.id) (\(hook.config.url))")
             } catch {
-              logger.warning("⚠️ Failed to delete webhook \(hook.id): \(error)")
+              logger.error("❌ Failed to delete webhook \(hook.id): \(error)")
+              // Continue anyway - we'll create the new one
             }
           }
+        }
+
+        // Check if webhook for current URL already exists
+        if existingHooks.contains(where: { $0.config.url == url }) {
+          logger.info("✓ Webhook already exists for current tunnel URL, skipping creation for \(repoName)")
+          continue
         }
 
         // Now create the new webhook
