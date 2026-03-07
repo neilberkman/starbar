@@ -4,35 +4,48 @@ import os.log
 private let logger = Logger(subsystem: "com.xuku.starbar", category: "tunnel")
 
 class TunnelManager {
+  private static let commonNgrokPaths = [
+    "/opt/homebrew/bin/ngrok",  // Apple Silicon Homebrew
+    "/usr/local/bin/ngrok",     // Intel Homebrew
+    "/usr/bin/ngrok",           // System install
+  ]
+
   private var process: Process?
   private(set) var tunnelURL: String?
   private var outputPipe = Pipe()
   private var errorPipe = Pipe()
+  private var stdoutBuffer = Data()
+  private var stderrBuffer = Data()
+  private var startupFailure: TunnelError?
+  private var recentLogLines: [String] = []
   private var isStarting = false
+  private var isStopping = false
   var onTunnelURLChanged: ((String) -> Void)?
   var onTunnelDied: (() -> Void)?
 
   static func parseURL(from output: String) -> String? {
-    // ngrok outputs: url=https://xxxx.ngrok-free.app
-    let pattern = "https://[a-zA-Z0-9-]+\\.ngrok-free\\.app"
+    let pattern = #"https://[A-Za-z0-9-]+\.(?:ngrok(?:-free)?\.app|trycloudflare\.com)"#
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
 
     let range = NSRange(output.startIndex..., in: output)
-    guard let match = regex.firstMatch(in: output, range: range) else { return nil }
+    guard let match = regex.firstMatch(in: output, range: range),
+          let matchRange = Range(match.range, in: output)
+    else {
+      return nil
+    }
 
-    return String(output[Range(match.range, in: output)!])
+    return String(output[matchRange])
   }
 
   func start(port: Int = 63472, timeout: TimeInterval = 10, maxRetries: Int = 3) async throws -> String {
-    // Prevent concurrent starts
     guard !isStarting else {
       logger.warning("⚠️ Tunnel already starting, skipping duplicate start request")
       throw TunnelError.alreadyStarting
     }
+
     isStarting = true
     defer { isStarting = false }
 
-    // Try with exponential backoff
     var lastError: Error?
 
     for attempt in 1...maxRetries {
@@ -44,10 +57,10 @@ class TunnelManager {
         return url
       } catch {
         lastError = error
-        logger.warning("⚠️ Tunnel attempt \(attempt)/\(maxRetries) failed: \(error)")
+        logger.warning("⚠️ Tunnel attempt \(attempt)/\(maxRetries) failed: \(error.localizedDescription)")
+        stop()
 
         if attempt < maxRetries {
-          // Exponential backoff: 2s, 4s, 8s
           let backoffSeconds = min(pow(2.0, Double(attempt)), 10.0)
           logger.info("→ Retrying in \(backoffSeconds)s...")
           try await Task.sleep(nanoseconds: UInt64(backoffSeconds * 1_000_000_000))
@@ -59,116 +72,191 @@ class TunnelManager {
   }
 
   private func attemptStart(port: Int, timeout: TimeInterval) async throws -> String {
-    // Find ngrok by checking common installation locations
-    // GUI apps don't get shell PATH, so we check directly
-    let commonPaths = [
-      "/opt/homebrew/bin/ngrok",  // Apple Silicon Homebrew
-      "/usr/local/bin/ngrok",      // Intel Homebrew
-      "/usr/bin/ngrok",            // System install
-    ]
+    let ngrokPath = try findNgrokPath()
 
-    var ngrokPath: String?
-    for path in commonPaths {
-      if FileManager.default.fileExists(atPath: path) {
-        ngrokPath = path
-        break
-      }
-    }
+    stop()
+    isStopping = false
+    startupFailure = nil
+    tunnelURL = nil
+    stdoutBuffer.removeAll(keepingCapacity: false)
+    stderrBuffer.removeAll(keepingCapacity: false)
+    recentLogLines.removeAll(keepingCapacity: false)
 
-    guard let foundPath = ngrokPath else {
-      throw TunnelError.ngrokNotInstalled
-    }
-
-    logger.info("→ Found ngrok at: \(foundPath)")
-
-    // Kill ALL ngrok processes to ensure clean state
-    let cleanupProcess = Process()
-    cleanupProcess.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-    cleanupProcess.arguments = ["-9", "ngrok"]
-    try? cleanupProcess.run()
-    cleanupProcess.waitUntilExit()
-
-    // Create fresh pipes for each attempt
     outputPipe = Pipe()
     errorPipe = Pipe()
 
-    // Start tunnel using discovered path
-    process = Process()
-    process?.executableURL = URL(fileURLWithPath: foundPath)
-    process?.arguments = ["http", "\(port)"]
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: ngrokPath)
+    process.arguments = [
+      "http",
+      "\(port)",
+      "--log", "stdout",
+      "--log-format", "json",
+      "--log-level", "info",
+    ]
+    process.standardOutput = outputPipe
+    process.standardError = errorPipe
 
-    process?.standardOutput = outputPipe
-    process?.standardError = errorPipe
+    outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+      let data = handle.availableData
+      guard !data.isEmpty else {
+        handle.readabilityHandler = nil
+        return
+      }
 
-    // Setup termination handler - called automatically when process exits
-    process?.terminationHandler = { [weak self] proc in
+      self?.consumeOutput(data, isErrorStream: false)
+    }
+
+    errorPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+      let data = handle.availableData
+      guard !data.isEmpty else {
+        handle.readabilityHandler = nil
+        return
+      }
+
+      self?.consumeOutput(data, isErrorStream: true)
+    }
+
+    process.terminationHandler = { [weak self] proc in
+      guard let self = self else { return }
+
       let reason = proc.terminationReason
       let status = proc.terminationStatus
       logger.error("💀 Ngrok terminated: reason=\(reason.rawValue) status=\(status)")
 
-      // Restart on ANY termination - we always want the tunnel running
-      self?.onTunnelDied?()
+      self.cleanupStreamReaders()
+
+      if self.isStopping {
+        self.isStopping = false
+        return
+      }
+
+      if self.tunnelURL == nil {
+        self.startupFailure = .processExited(self.latestLogSummary(status: status))
+      } else {
+        self.tunnelURL = nil
+        self.onTunnelDied?()
+      }
     }
 
-    try process?.run()
-
-    // Try both common ngrok API ports (4040 is default, but it may use 4041 if 4040 is busy)
-    let apiPorts = [4040, 4041]
+    self.process = process
+    try process.run()
+    logger.info("→ Started ngrok at: \(ngrokPath)")
 
     let startTime = Date()
     while Date().timeIntervalSince(startTime) < timeout {
-      for port in apiPorts {
-        guard let apiURL = URL(string: "http://localhost:\(port)/api/tunnels") else { continue }
-
-        do {
-          let (data, _) = try await URLSession.shared.data(from: apiURL)
-          if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-             let tunnels = json["tunnels"] as? [[String: Any]],
-             let firstTunnel = tunnels.first,
-             let publicURL = firstTunnel["public_url"] as? String,
-             publicURL.hasPrefix("https://")
-          {
-            tunnelURL = publicURL
-            logger.info("✓ Tunnel URL extracted from API (port \(port)): \(publicURL)")
-
-            // Notify callback that URL is ready
-            onTunnelURLChanged?(publicURL)
-
-            return publicURL
-          }
-        } catch {
-          // API not ready on this port, try next
-          continue
-        }
+      if let url = tunnelURL {
+        return url
       }
 
-      try await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+      if let startupFailure {
+        throw startupFailure
+      }
+
+      if !process.isRunning {
+        throw TunnelError.processExited(latestLogSummary(status: process.terminationStatus))
+      }
+
+      try await Task.sleep(nanoseconds: 200_000_000)
     }
 
-    logger.error("❌ Tunnel URL fetch timeout after \(timeout)s")
     throw TunnelError.urlParseTimeout
   }
 
   func stop() {
-    process?.terminationHandler = nil
-    process?.terminate()
-    process = nil
+    isStopping = true
+    startupFailure = nil
     tunnelURL = nil
+    stdoutBuffer.removeAll(keepingCapacity: false)
+    stderrBuffer.removeAll(keepingCapacity: false)
+    recentLogLines.removeAll(keepingCapacity: false)
+
+    cleanupStreamReaders()
+
+    let process = self.process
+    self.process = nil
+    process?.terminationHandler = nil
+
+    guard let process, process.isRunning else {
+      isStopping = false
+      return
+    }
+
+    process.terminate()
+    process.waitUntilExit()
+    isStopping = false
+  }
+
+  private func findNgrokPath() throws -> String {
+    for path in Self.commonNgrokPaths where FileManager.default.fileExists(atPath: path) {
+      return path
+    }
+
+    throw TunnelError.ngrokNotInstalled
+  }
+
+  private func consumeOutput(_ data: Data, isErrorStream: Bool) {
+    if isErrorStream {
+      stderrBuffer.append(data)
+      drainBuffer(&stderrBuffer)
+    } else {
+      stdoutBuffer.append(data)
+      drainBuffer(&stdoutBuffer)
+    }
+  }
+
+  private func drainBuffer(_ buffer: inout Data) {
+    while let newlineIndex = buffer.firstIndex(of: 0x0a) {
+      let lineData = buffer.prefix(upTo: newlineIndex)
+      buffer.removeSubrange(...newlineIndex)
+
+      guard let rawLine = String(data: lineData, encoding: .utf8) else { continue }
+      let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !line.isEmpty else { continue }
+
+      recentLogLines.append(line)
+      if recentLogLines.count > 20 {
+        recentLogLines.removeFirst(recentLogLines.count - 20)
+      }
+
+      if let url = Self.parseURL(from: line), url != tunnelURL {
+        tunnelURL = url
+        logger.info("✓ Tunnel URL extracted from ngrok logs: \(url)")
+        onTunnelURLChanged?(url)
+      }
+    }
+  }
+
+  private func latestLogSummary(status: Int32) -> String {
+    let recentLogs = recentLogLines.suffix(3).joined(separator: " | ")
+    if recentLogs.isEmpty {
+      return "status \(status)"
+    }
+
+    return "status \(status): \(recentLogs)"
+  }
+
+  private func cleanupStreamReaders() {
+    outputPipe.fileHandleForReading.readabilityHandler = nil
+    errorPipe.fileHandleForReading.readabilityHandler = nil
   }
 
   enum TunnelError: Error, LocalizedError {
     case ngrokNotInstalled
     case urlParseTimeout
     case alreadyStarting
+    case processExited(String)
 
     var errorDescription: String? {
       switch self {
       case .ngrokNotInstalled:
         return "ngrok not found. Please install it: brew install ngrok && ngrok config add-authtoken YOUR_TOKEN"
       case .urlParseTimeout:
-        return "Failed to get tunnel URL - ngrok might not be configured. Run: ngrok config add-authtoken YOUR_TOKEN"
+        return "Failed to get tunnel URL from ngrok before timeout. Check your ngrok config and auth token."
       case .alreadyStarting:
         return "Tunnel is already starting"
+      case .processExited(let details):
+        return "ngrok exited before the tunnel was ready (\(details))"
       }
     }
   }

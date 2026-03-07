@@ -571,7 +571,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
 
         // Delete webhooks pointing to trycloudflare.com (our old tunnels)
         for webhook in webhooks {
-          if webhook.url.contains("trycloudflare.com") {
+          if isManagedTunnelWebhookURL(webhook.config.url) {
             try await api.deleteRepoWebhook(repo: repoName, webhookId: webhook.id)
             logger.info("Deleted old webhook from \(repoName): \(webhook.id)")
           }
@@ -602,6 +602,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     return false
   }
 
+  func isManagedTunnelWebhookURL(_ url: String) -> Bool {
+    url.contains("trycloudflare.com") ||
+    url.contains("ngrok.app") ||
+    url.contains("ngrok-free.app")
+  }
+
   func createWebhook(url: String) async {
     guard let api = gitHubAPI else { return }
 
@@ -619,8 +625,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
         // Filter to tunnel webhooks (not pointing to current URL)
         let ourOldHooks = existingHooks.filter {
           let hookURL = $0.config.url
-          let isTunnelWebhook = hookURL.contains("trycloudflare.com") ||
-                                 hookURL.contains("ngrok.app")
+          let isTunnelWebhook = isManagedTunnelWebhookURL(hookURL)
           let isNotCurrentURL = hookURL != url
           return isTunnelWebhook && isNotCurrentURL
         }

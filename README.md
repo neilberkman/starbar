@@ -127,10 +127,14 @@ log stream --predicate 'subsystem == "com.xuku.starbar"' --level info
 ```bash
 git clone https://github.com/neilberkman/starbar
 cd starbar
-swift build -c release
+./scripts/build-app.sh
 ```
 
-The binary will be at `.build/release/StarBar`. You'll still need to configure ngrok separately.
+This builds `dist/StarBar.app`, which you can move into `/Applications`.
+
+If you launch the raw binary in `.build/.../StarBar` directly, macOS treats it like a command-line executable and may open a Terminal window for it. Use the `.app` bundle instead.
+
+You'll still need to configure ngrok separately.
 
 ## License
 

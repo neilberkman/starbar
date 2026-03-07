@@ -12,21 +12,12 @@ class GitHubAPI {
   }
 
   func createRepoWebhook(repo: String, webhookURL: String) async throws -> (id: Int, secret: String) {
-    let url = URL(string: "\(baseURL)/repos/\(repo)/hooks")!
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-    request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
-    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
     let secret = UUID().uuidString
-    let payload = WebhookCreateRequest(
-      config: WebhookCreateRequest.WebhookConfig(
-        url: webhookURL,
-        secret: secret
-      )
+    let request = try createRepoWebhookRequest(
+      repo: repo,
+      webhookURL: webhookURL,
+      secret: secret
     )
-    request.httpBody = try JSONEncoder().encode(payload)
 
     let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -44,6 +35,24 @@ class GitHubAPI {
 
     let webhookResponse = try JSONDecoder().decode(WebhookResponse.self, from: data)
     return (id: webhookResponse.id, secret: secret)
+  }
+
+  func createRepoWebhookRequest(repo: String, webhookURL: String, secret: String) throws -> URLRequest {
+    let url = URL(string: "\(baseURL)/repos/\(repo)/hooks")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    let payload = WebhookCreateRequest(
+      config: WebhookCreateRequest.WebhookConfig(
+        url: webhookURL,
+        secret: secret
+      )
+    )
+    request.httpBody = try JSONEncoder().encode(payload)
+    return request
   }
 
   func deleteRepoWebhook(repo: String, webhookId: Int) async throws {
