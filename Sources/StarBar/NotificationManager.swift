@@ -29,9 +29,33 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
   }
 
   func showStarNotification(repo: String, user: String) {
-    // Use osascript for notifications since UserNotifications requires proper app bundle
+    deliverNotification(title: "⭐ New Star", message: "\(repo) from @\(user)")
+    incrementBadge()
+  }
+
+  func showIssueNotification(repo: String, number: Int, title: String, user: String) {
+    deliverNotification(
+      title: "📩 New Issue · \(repo)",
+      message: "#\(number) \(title) — @\(user)"
+    )
+    incrementBadge()
+  }
+
+  func showPullRequestNotification(repo: String, number: Int, title: String, user: String) {
+    deliverNotification(
+      title: "🔃 New PR · \(repo)",
+      message: "#\(number) \(title) — @\(user)"
+    )
+    incrementBadge()
+  }
+
+  private func deliverNotification(title: String, message: String) {
+    // osascript string literals require escaping " and \.
+    let safeTitle = osascriptEscape(title)
+    let safeMessage = osascriptEscape(message)
+
     let script = """
-      display notification "\(repo) from @\(user)" with title "⭐ New Star" sound name "default"
+      display notification "\(safeMessage)" with title "\(safeTitle)" sound name "default"
       """
 
     let task = Process()
@@ -44,8 +68,11 @@ class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     } catch {
       logger.error("❌ Failed to show notification: \(error)")
     }
+  }
 
-    incrementBadge()
+  private func osascriptEscape(_ s: String) -> String {
+    s.replacingOccurrences(of: "\\", with: "\\\\")
+     .replacingOccurrences(of: "\"", with: "\\\"")
   }
 
   func incrementBadge() {

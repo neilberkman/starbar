@@ -74,10 +74,82 @@ struct WebhookPayload: Codable {
   }
 }
 
+// Lightweight envelope used to extract the repo name (for secret lookup)
+// without fully decoding event-specific payloads.
+struct WebhookEnvelope: Codable {
+  let repository: RepoIdentity
+  struct RepoIdentity: Codable {
+    let fullName: String
+    enum CodingKeys: String, CodingKey { case fullName = "full_name" }
+  }
+}
+
+struct IssuePayload: Codable {
+  let action: String
+  let issue: Issue
+  let repository: WebhookPayload.Repository
+  let sender: GitHubUser
+}
+
+struct PullRequestPayload: Codable {
+  let action: String
+  let pullRequest: PullRequest
+  let repository: WebhookPayload.Repository
+  let sender: GitHubUser
+
+  enum CodingKeys: String, CodingKey {
+    case action
+    case pullRequest = "pull_request"
+    case repository
+    case sender
+  }
+}
+
+struct Issue: Codable {
+  let number: Int
+  let title: String
+  let htmlUrl: String
+  let user: GitHubUser
+  let createdAt: Date
+  let pullRequest: PullRequestRef?  // present when this "issue" is actually a PR
+
+  struct PullRequestRef: Codable {
+    let htmlUrl: String?
+    enum CodingKeys: String, CodingKey { case htmlUrl = "html_url" }
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case number
+    case title
+    case htmlUrl = "html_url"
+    case user
+    case createdAt = "created_at"
+    case pullRequest = "pull_request"
+  }
+
+  var isPullRequest: Bool { pullRequest != nil }
+}
+
+struct PullRequest: Codable {
+  let number: Int
+  let title: String
+  let htmlUrl: String
+  let user: GitHubUser
+  let createdAt: Date
+
+  enum CodingKeys: String, CodingKey {
+    case number
+    case title
+    case htmlUrl = "html_url"
+    case user
+    case createdAt = "created_at"
+  }
+}
+
 struct WebhookCreateRequest: Codable {
   let name = "web"
   let active = true
-  let events = ["watch"]
+  let events = WebhookEvents.subscribed
   let config: WebhookConfig
 
   enum CodingKeys: String, CodingKey {
@@ -100,10 +172,16 @@ struct WebhookCreateRequest: Codable {
   }
 }
 
+enum WebhookEvents {
+  static let subscribed: [String] = ["watch", "issues", "pull_request"]
+  static var subscribedSet: Set<String> { Set(subscribed) }
+}
+
 struct WebhookResponse: Codable {
   let id: Int
   let url: String
   let config: WebhookConfig
+  let events: [String]?
 
   struct WebhookConfig: Codable {
     let url: String

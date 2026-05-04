@@ -9,10 +9,11 @@ class WebhookServer {
   private var listener: NWListener?
   private let listenerQueue = DispatchQueue(label: "com.starbar.webhook", qos: .userInitiated)
   var onStarReceived: ((WebhookPayload) -> Void)?
-  var getWebhookSecret: ((String) -> String?)?  // Callback to get secret for repo
+  var onIssueEvent: ((IssuePayload) -> Void)?
+  var onPullRequestEvent: ((PullRequestPayload) -> Void)?
+  var getWebhookSecret: ((String) -> String?)?
 
   func start(port: UInt16 = 63472) throws {
-    // Stop existing listener if any
     if listener != nil {
       logger.warning("⚠️ Webhook server already exists, stopping old one first")
       stop()
@@ -56,7 +57,6 @@ class WebhookServer {
           receivedData.append(data)
         }
 
-        // Parse HTTP request
         guard let request = String(data: receivedData, encoding: .utf8) else {
           if !isComplete {
             receiveMore()
@@ -64,9 +64,7 @@ class WebhookServer {
           return
         }
 
-        // Check if we have complete HTTP request (headers + body)
         if let headerEnd = request.range(of: "\r\n\r\n") {
-          // Extract Content-Length to know how much body to expect
           var expectedBodyLength = 0
           if let contentLengthRange = request.range(of: "Content-Length: "),
              let lineEnd = request[contentLengthRange.upperBound...].range(of: "\r\n") {
@@ -77,13 +75,11 @@ class WebhookServer {
           let headerEndIndex = request.distance(from: request.startIndex, to: headerEnd.upperBound)
           let bodyLength = receivedData.count - headerEndIndex
 
-          // If we don't have the complete body yet, keep receiving
           if bodyLength < expectedBodyLength && !isComplete {
             receiveMore()
             return
           }
 
-          // We have complete request, handle it
           if request.contains("POST /webhook") {
             let headers = String(request[..<headerEnd.lowerBound])
             let body = String(request[headerEnd.upperBound...])
@@ -111,7 +107,6 @@ class WebhookServer {
               }))
           }
         } else if !isComplete {
-          // Don't have complete headers yet, keep receiving
           receiveMore()
         }
       }
@@ -123,11 +118,8 @@ class WebhookServer {
   private func handleWebhook(headers: String, body: String) {
     logger.debug("🔌 handleWebhook called, body length: \(body.count)")
 
-    // GitHub sends webhooks as application/x-www-form-urlencoded with payload= parameter
     var jsonString = body
-
     if body.hasPrefix("payload=") {
-      // Extract and URL-decode the payload parameter
       let payloadValue = String(body.dropFirst("payload=".count))
       if let decoded = payloadValue.removingPercentEncoding {
         jsonString = decoded
@@ -140,39 +132,75 @@ class WebhookServer {
       return
     }
 
-    // Save raw payload to file for test fixtures
     let timestamp = Date().timeIntervalSince1970
     let filename = "/tmp/webhook_\(timestamp).json"
     try? jsonString.write(toFile: filename, atomically: true, encoding: .utf8)
     logger.debug("💾 Saved raw webhook to: \(filename)")
 
+    let event = headerValue(named: "X-GitHub-Event", in: headers)?.lowercased() ?? ""
+    logger.info("📬 Webhook event: \(event)")
+
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
 
-    do {
-      let payload = try decoder.decode(WebhookPayload.self, from: data)
-      logger.info("✓ Decoded webhook payload successfully")
+    // Extract repo name for signature secret lookup, regardless of event shape.
+    guard let envelope = try? decoder.decode(WebhookEnvelope.self, from: data) else {
+      // ping events have repository too; only events without one (e.g. installation pings) hit this
+      logger.warning("⚠️ Could not extract repository from webhook body")
+      return
+    }
+    let repoName = envelope.repository.fullName
 
-      // Validate signature if we have a secret for this repo
-      if let secret = getWebhookSecret?(payload.repository.fullName) {
-        guard validateSignature(headers: headers, body: body, secret: secret) else {
-          logger.error("❌ Invalid webhook signature for \(payload.repository.fullName) - rejecting webhook")
-          return
-        }
-        logger.info("✓ Webhook signature validated for \(payload.repository.fullName)")
-      } else {
-        logger.warning("⚠️ No webhook secret found for \(payload.repository.fullName) - skipping validation")
+    if let secret = getWebhookSecret?(repoName) {
+      guard validateSignature(headers: headers, body: jsonString, secret: secret) else {
+        logger.error("❌ Invalid webhook signature for \(repoName) - rejecting")
+        return
       }
+      logger.info("✓ Webhook signature validated for \(repoName)")
+    } else {
+      logger.warning("⚠️ No webhook secret for \(repoName) - skipping validation")
+    }
 
-      onStarReceived?(payload)
-    } catch {
-      logger.error("❌ Failed to decode webhook payload: \(error)")
-      logger.error("❌ JSON was: \(String(jsonString.prefix(500)))")
+    switch event {
+    case "ping":
+      logger.info("✓ Ping received for \(repoName)")
+    case "watch":
+      decodeAndDispatch(WebhookPayload.self, from: data, decoder: decoder) { [weak self] payload in
+        self?.onStarReceived?(payload)
+      }
+    case "issues":
+      decodeAndDispatch(IssuePayload.self, from: data, decoder: decoder) { [weak self] payload in
+        self?.onIssueEvent?(payload)
+      }
+    case "pull_request":
+      decodeAndDispatch(PullRequestPayload.self, from: data, decoder: decoder) { [weak self] payload in
+        self?.onPullRequestEvent?(payload)
+      }
+    default:
+      logger.info("ℹ️ Ignoring webhook event: \(event)")
     }
   }
 
+  private func decodeAndDispatch<T: Decodable>(
+    _ type: T.Type, from data: Data, decoder: JSONDecoder, dispatch: (T) -> Void
+  ) {
+    do {
+      let payload = try decoder.decode(T.self, from: data)
+      dispatch(payload)
+    } catch {
+      logger.error("❌ Failed to decode \(String(describing: T.self)): \(error)")
+    }
+  }
+
+  private func headerValue(named name: String, in headers: String) -> String? {
+    guard let range = headers.range(of: "\(name): ", options: .caseInsensitive),
+          let lineEnd = headers[range.upperBound...].range(of: "\r\n") else {
+      return nil
+    }
+    return String(headers[range.upperBound..<lineEnd.lowerBound])
+  }
+
   private func validateSignature(headers: String, body: String, secret: String) -> Bool {
-    // Extract X-Hub-Signature-256 header
     guard let signatureRange = headers.range(of: "X-Hub-Signature-256: ", options: .caseInsensitive),
           let lineEnd = headers[signatureRange.upperBound...].range(of: "\r\n") else {
       logger.error("❌ Missing X-Hub-Signature-256 header")
@@ -182,7 +210,6 @@ class WebhookServer {
     let receivedSignature = String(headers[signatureRange.upperBound..<lineEnd.lowerBound])
     logger.debug("🔐 Received signature: \(receivedSignature)")
 
-    // GitHub sends the signature as "sha256=<hex>"
     guard receivedSignature.hasPrefix("sha256=") else {
       logger.error("❌ Invalid signature format")
       return false
@@ -190,7 +217,6 @@ class WebhookServer {
 
     let receivedHex = String(receivedSignature.dropFirst("sha256=".count))
 
-    // Compute HMAC-SHA256 of the raw body
     guard let bodyData = body.data(using: .utf8),
           let secretData = secret.data(using: .utf8) else {
       logger.error("❌ Failed to convert body or secret to data")
@@ -203,7 +229,6 @@ class WebhookServer {
 
     logger.debug("🔐 Computed signature: sha256=\(computedHex)")
 
-    // Constant-time comparison
     return receivedHex.lowercased() == computedHex.lowercased()
   }
 }

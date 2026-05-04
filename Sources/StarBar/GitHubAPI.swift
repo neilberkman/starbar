@@ -6,9 +6,17 @@ private let logger = Logger(subsystem: "com.xuku.starbar", category: "githubapi"
 class GitHubAPI {
   private let token: String
   private let baseURL = "https://api.github.com"
+  private var cachedAuthenticatedUser: String?
 
   init(token: String) {
     self.token = token
+  }
+
+  func authenticatedUserCached() async throws -> String {
+    if let cached = cachedAuthenticatedUser { return cached }
+    let user = try await getAuthenticatedUser()
+    cachedAuthenticatedUser = user
+    return user
   }
 
   func createRepoWebhook(repo: String, webhookURL: String) async throws -> (id: Int, secret: String) {
@@ -170,6 +178,46 @@ class GitHubAPI {
     }
 
     return allStargazers
+  }
+
+  /// Fetches issues created since `since` (paginated). The returned array
+  /// includes both issues and pull requests (GitHub's `/issues` endpoint
+  /// returns PRs alongside issues; callers can split via `issue.isPullRequest`).
+  /// `since` filters by `updated_at` server-side; we additionally filter by
+  /// `created_at > since` here so edits to old issues don't get re-surfaced.
+  func fetchRecentIssues(repo: String, since: Date) async throws -> [Issue] {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    let sinceParam = formatter.string(from: since)
+
+    var results: [Issue] = []
+    var page = 1
+    let maxPages = 5  // safety bound; very active repo would need more
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+
+    while page <= maxPages {
+      let url = URL(string: "\(baseURL)/repos/\(repo)/issues?since=\(sinceParam)&state=all&sort=created&direction=desc&per_page=100&page=\(page)")!
+      var request = URLRequest(url: url)
+      request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+      request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+        throw APIError.requestFailed
+      }
+
+      let issues = try decoder.decode([Issue].self, from: data)
+      if issues.isEmpty { break }
+      results.append(contentsOf: issues)
+
+      // Sorted desc by created — once we see one older than cursor, stop.
+      if let oldest = issues.last, oldest.createdAt <= since { break }
+      page += 1
+    }
+
+    return results.filter { $0.createdAt > since }
   }
 
   enum APIError: Error {

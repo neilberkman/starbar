@@ -36,28 +36,31 @@ struct RepoState: Codable {
   var starCount: Int
   var webhookSecret: String?
   var createdAt: Date
+  var lastActivityAt: Date?  // cursor for issue/PR backfill
 
   enum CodingKeys: String, CodingKey {
     case lastStarAt = "last_star_at"
     case starCount = "star_count"
     case webhookSecret = "webhook_secret"
     case createdAt = "created_at"
+    case lastActivityAt = "last_activity_at"
   }
 
-  // Custom decoder to handle legacy configs without createdAt
+  // Custom decoder to handle legacy configs without createdAt / lastActivityAt
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     lastStarAt = try container.decodeIfPresent(Date.self, forKey: .lastStarAt)
     starCount = try container.decode(Int.self, forKey: .starCount)
     webhookSecret = try container.decodeIfPresent(String.self, forKey: .webhookSecret)
-    // Default to lastStarAt or current date if createdAt missing (for legacy configs)
     createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? lastStarAt ?? Date()
+    lastActivityAt = try container.decodeIfPresent(Date.self, forKey: .lastActivityAt)
   }
 
-  init(lastStarAt: Date?, starCount: Int, webhookSecret: String?, createdAt: Date) {
+  init(lastStarAt: Date?, starCount: Int, webhookSecret: String?, createdAt: Date, lastActivityAt: Date? = nil) {
     self.lastStarAt = lastStarAt
     self.starCount = starCount
     self.webhookSecret = webhookSecret
     self.createdAt = createdAt
+    self.lastActivityAt = lastActivityAt
   }
 }

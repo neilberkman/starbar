@@ -1,16 +1,16 @@
 # StarBar
 
-Is your repo getting a little attention? Stop getting distracted checking the star count.
+Is your repo getting a little attention? Stop refreshing GitHub.
 
-StarBar gives you the dopamine hit of a GitHub star notification the moment it happens. No polling, no delays, no refreshing GitHub. Webhooks deliver star events straight to your Mac menu bar in real-time.
+StarBar gives you real-time menu bar notifications for stars, new issues, and new pull requests on your repos. Webhooks deliver events straight to your Mac — no polling, no delays.
 
 ## How it works
 
-1. Creates webhooks on your active repos (repos with >10 stars, recent activity, or created in last 3 months)
+1. Creates webhooks (subscribed to `watch`, `issues`, and `pull_request`) on your active repos — repos with >10 stars, recent activity, or created in the last 3 months
 2. Runs a local webhook server with ngrok tunnel to receive GitHub events
 3. Validates webhook signatures and shows native notifications
 4. Automatically handles network changes and tunnel restarts
-5. Syncs new repos and missed stars when you manually trigger a rescan
+5. Syncs new repos, missed stars, and missed issues/PRs when you manually trigger a rescan or relaunch the app
 
 ## Installation
 
@@ -80,13 +80,17 @@ This automatically installs ngrok as a dependency. After installation:
 - Total star count across all repos
 - Tunnel status (active/offline)
 - Number of tracked repos
-- Recent Stars submenu with last 50 stars (unread stars marked with bullet)
+- Recent Stars submenu with last 50 stars (unread marked with bullet)
+- Recent Activity submenu with last 50 issues/PRs (unread marked with bullet)
 
 **Actions:**
 
-- Click "Rescan Repos Now" to sync new repos and catch up on missed stars
+- Click "Rescan Repos Now" to sync new repos and catch up on missed stars and issues/PRs
 - Click "Launch at Startup" to toggle launch behavior
 - Click any star in Recent Stars to open that repo's stargazers page
+- Click any issue or PR in Recent Activity to open it on GitHub
+
+Notifications only fire for activity from other users — issues and PRs you open yourself are ignored.
 
 **Which repos get webhooks:**
 

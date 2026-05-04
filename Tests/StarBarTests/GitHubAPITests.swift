@@ -20,6 +20,6 @@ final class GitHubAPITests: XCTestCase {
     let payload = try JSONDecoder().decode(WebhookCreateRequest.self, from: body)
     XCTAssertEqual(payload.config.url, "https://test.ngrok.app/webhook")
     XCTAssertEqual(payload.config.secret, "secret-value")
-    XCTAssertEqual(payload.events, ["watch"])
+    XCTAssertEqual(Set(payload.events), Set(["watch", "issues", "pull_request"]))
   }
 }

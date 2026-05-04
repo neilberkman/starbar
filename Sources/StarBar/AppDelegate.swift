@@ -28,6 +28,27 @@ struct StarEvent {
   let starNumber: Int?  // Which # star this was (e.g., star #157)
 }
 
+enum ActivityKind: String {
+  case issue
+  case pullRequest
+}
+
+struct ActivityEvent {
+  let kind: ActivityKind
+  let repo: String
+  let number: Int
+  let title: String
+  let user: String
+  let url: String
+  let timestamp: Date
+  var isRead: Bool
+
+  var menuTitle: String {
+    let icon = kind == .issue ? "📩" : "🔃"
+    return "\(icon) \(repo) #\(number): \(title) — @\(user)"
+  }
+}
+
 // Actor for thread-safe webhook coordination
 actor WebhookCoordinator {
   private var isSettingUp = false
@@ -65,6 +86,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
   var notificationManager: NotificationManager?
   var networkMonitor: NetworkMonitor?
   var recentStars: [StarEvent] = []
+  var recentActivity: [ActivityEvent] = []
+  var authenticatedUser: String?
   var setupTokenInput: NSTextField?
   var setupWindow: NSWindow?
   private var isScanning = false
@@ -260,6 +283,30 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
 
       recentItem.submenu = recentMenu
       menu.addItem(recentItem)
+    }
+
+    // Recent Activity submenu (issues + PRs)
+    if !recentActivity.isEmpty {
+      let activityItem = NSMenuItem(title: "Recent Activity", action: nil, keyEquivalent: "")
+      let activityMenu = NSMenu()
+      activityMenu.delegate = self
+
+      let last10 = Array(recentActivity.prefix(10))
+      for (index, event) in last10.enumerated() {
+        let timeAgo = timeAgoString(from: event.timestamp)
+        let prefix = event.isRead ? "" : "• "
+        let title = "\(prefix)\(event.menuTitle) (\(timeAgo))"
+        let item = NSMenuItem(title: title, action: #selector(openActivity(_:)), keyEquivalent: "")
+        item.target = self
+        item.tag = index
+        activityMenu.addItem(item)
+      }
+
+      activityItem.submenu = activityMenu
+      menu.addItem(activityItem)
+    }
+
+    if !recentStars.isEmpty || !recentActivity.isEmpty {
       menu.addItem(NSMenuItem.separator())
     }
 
@@ -326,6 +373,23 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
 
     let url = URL(string: "https://github.com/\(event.repo)/stargazers")!
     NSWorkspace.shared.open(url)
+  }
+
+  @objc func openActivity(_ sender: NSMenuItem) {
+    let index = sender.tag
+    guard index < recentActivity.count else { return }
+
+    var event = recentActivity[index]
+    if !event.isRead {
+      event.isRead = true
+      recentActivity[index] = event
+      notificationManager?.decrementBadge()
+      updateMenu()
+    }
+
+    if let url = URL(string: event.url) {
+      NSWorkspace.shared.open(url)
+    }
   }
 
   func loadConfig() {
@@ -507,6 +571,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
       self?.handleStarEvent(payload: payload)
     }
 
+    webhookServer?.onIssueEvent = { [weak self] payload in
+      self?.handleIssueEvent(payload: payload)
+    }
+
+    webhookServer?.onPullRequestEvent = { [weak self] payload in
+      self?.handlePullRequestEvent(payload: payload)
+    }
+
     // Setup webhook secret lookup for signature validation
     webhookServer?.getWebhookSecret = { [weak self] repoName in
       return self?.config?.state.repos[repoName]?.webhookSecret
@@ -643,10 +715,19 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
           }
         }
 
-        // Check if webhook for current URL already exists
-        if existingHooks.contains(where: { $0.config.url == url }) {
-          logger.info("✓ Webhook already exists for current tunnel URL, skipping creation for \(repoName)")
-          continue
+        // Check if webhook for current URL already exists with current event set.
+        if let existing = existingHooks.first(where: { $0.config.url == url }) {
+          let currentEvents = Set(existing.events ?? [])
+          if currentEvents == WebhookEvents.subscribedSet {
+            logger.info("✓ Webhook up to date for \(repoName), skipping")
+            continue
+          }
+          logger.info("Webhook for \(repoName) has stale events \(existing.events ?? []), recreating")
+          do {
+            try await api.deleteRepoWebhook(repo: repoName, webhookId: existing.id)
+          } catch {
+            logger.error("❌ Failed to delete stale webhook \(existing.id): \(error)")
+          }
         }
 
         // Now create the new webhook
@@ -692,6 +773,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
     recentStars.removeAll()
 
     do {
+      // Fetch + cache authenticated user (used to filter self-opened activity)
+      authenticatedUser = try? await api.authenticatedUserCached()
+
       // Fetch repos
       logger.debug("🔍 performInitialScan: Fetching repos from GitHub API...")
       let repos = try await api.fetchRepos()
@@ -784,6 +868,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
       self.setScanning(false)
       self.updateMenu()  // Update again to clear "Scanning..." status
     }
+
+    await backfillActivity()
   }
 
   func setupNetworkMonitoring() {
@@ -874,6 +960,136 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, @unch
 
     saveConfig()
     updateMenu()
+  }
+
+  func handleIssueEvent(payload: IssuePayload) {
+    guard payload.action == "opened" || payload.action == "reopened" else {
+      logger.debug("ℹ️ Ignoring issue action: \(payload.action)")
+      return
+    }
+    if payload.issue.isPullRequest {
+      // GitHub also fires `issues` events for PRs in some configs; we handle PRs separately.
+      return
+    }
+    if let me = authenticatedUser, payload.sender.login == me {
+      logger.debug("ℹ️ Ignoring self-opened issue")
+      return
+    }
+
+    let event = ActivityEvent(
+      kind: .issue,
+      repo: payload.repository.fullName,
+      number: payload.issue.number,
+      title: payload.issue.title,
+      user: payload.sender.login,
+      url: payload.issue.htmlUrl,
+      timestamp: payload.issue.createdAt,
+      isRead: false
+    )
+    insertActivity(event)
+    config?.state.repos[payload.repository.fullName]?.lastActivityAt = max(
+      config?.state.repos[payload.repository.fullName]?.lastActivityAt ?? .distantPast,
+      payload.issue.createdAt
+    )
+
+    notificationManager?.showIssueNotification(
+      repo: payload.repository.fullName,
+      number: payload.issue.number,
+      title: payload.issue.title,
+      user: payload.sender.login
+    )
+    saveConfig()
+    updateMenu()
+  }
+
+  func handlePullRequestEvent(payload: PullRequestPayload) {
+    guard payload.action == "opened" || payload.action == "reopened" else {
+      logger.debug("ℹ️ Ignoring PR action: \(payload.action)")
+      return
+    }
+    if let me = authenticatedUser, payload.sender.login == me {
+      logger.debug("ℹ️ Ignoring self-opened PR")
+      return
+    }
+
+    let event = ActivityEvent(
+      kind: .pullRequest,
+      repo: payload.repository.fullName,
+      number: payload.pullRequest.number,
+      title: payload.pullRequest.title,
+      user: payload.sender.login,
+      url: payload.pullRequest.htmlUrl,
+      timestamp: payload.pullRequest.createdAt,
+      isRead: false
+    )
+    insertActivity(event)
+    config?.state.repos[payload.repository.fullName]?.lastActivityAt = max(
+      config?.state.repos[payload.repository.fullName]?.lastActivityAt ?? .distantPast,
+      payload.pullRequest.createdAt
+    )
+
+    notificationManager?.showPullRequestNotification(
+      repo: payload.repository.fullName,
+      number: payload.pullRequest.number,
+      title: payload.pullRequest.title,
+      user: payload.sender.login
+    )
+    saveConfig()
+    updateMenu()
+  }
+
+  private func insertActivity(_ event: ActivityEvent) {
+    // Dedupe by URL
+    if recentActivity.contains(where: { $0.url == event.url }) { return }
+    recentActivity.insert(event, at: 0)
+    if recentActivity.count > 50 {
+      recentActivity = Array(recentActivity.prefix(50))
+    }
+  }
+
+  func backfillActivity() async {
+    guard let api = gitHubAPI, let cfg = config else { return }
+
+    let trackedRepos = cfg.state.trackedRepos
+    let defaultSince = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+    let me = authenticatedUser
+
+    for repoName in trackedRepos {
+      let since = cfg.state.repos[repoName]?.lastActivityAt ?? defaultSince
+      do {
+        let issues = try await api.fetchRecentIssues(repo: repoName, since: since)
+        for issue in issues {
+          if let me = me, issue.user.login == me { continue }
+          let event = ActivityEvent(
+            kind: issue.isPullRequest ? .pullRequest : .issue,
+            repo: repoName,
+            number: issue.number,
+            title: issue.title,
+            user: issue.user.login,
+            url: issue.pullRequest?.htmlUrl ?? issue.htmlUrl,
+            timestamp: issue.createdAt,
+            isRead: true  // backfill never increments badge
+          )
+          insertActivity(event)
+        }
+
+        // Cursor: bump to newest createdAt seen, or max(since, now-1s) if empty.
+        let newCursor = issues.map { $0.createdAt }.max() ?? Date()
+        if config?.state.repos[repoName] != nil {
+          config?.state.repos[repoName]?.lastActivityAt = newCursor
+        }
+      } catch {
+        logger.error("❌ backfillActivity failed for \(repoName): \(error)")
+      }
+    }
+
+    recentActivity.sort { $0.timestamp > $1.timestamp }
+    if recentActivity.count > 50 {
+      recentActivity = Array(recentActivity.prefix(50))
+    }
+
+    saveConfig()
+    DispatchQueue.main.async { self.updateMenu() }
   }
 
   @objc func rescanRepos() {
