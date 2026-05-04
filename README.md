@@ -98,6 +98,13 @@ StarBar only creates webhooks on "active" repos to stay within GitHub's webhook 
 
 Inactive repos are still tracked but won't send real-time notifications until they become active again.
 
+## Storage
+
+- **GitHub token**: macOS Keychain (service `com.xuku.starbar`, account `github_token`)
+- **Repo state and per-repo webhook secrets**: `~/Library/Application Support/StarBar/config.json`
+
+Upgrading from an earlier version that kept the token in `config.json`? Just relaunch — StarBar moves the token to the Keychain on next launch and removes it from the JSON file.
+
 ## Troubleshooting
 
 **Tunnel shows offline:**
